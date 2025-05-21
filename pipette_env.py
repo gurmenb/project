@@ -1,31 +1,40 @@
 import numpy as np
 import os
-from gym import utils
-from gym import spaces
-from gym.envs.mujoco import mujoco_env
-import mujoco_py
+import gymnasium as gym
+from gymnasium import spaces
+from gymnasium.envs.mujoco.mujoco_env import MujocoEnv
+import mujoco
 
-class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
-    def __init__(self):
+class PipetteEnv(MujocoEnv):
+    metadata = {
+        "render_modes": ["human", "rgb_array"],
+        "render_fps": 100,
+    }
+    
+    def __init__(self, render_mode=None):
         # Create temp directory for model files if it doesn't exist
         os.makedirs("tmp", exist_ok=True)
         
         # Create a simplified pipette model XML
-        self.model_xml = self._create_model_xml()
+        model_xml = self._create_model_xml()
         with open("tmp/pipette_model.xml", "w") as f:
-            f.write(self.model_xml)
+            f.write(model_xml)
         
         # Initialize MuJoCo environment
-        mujoco_env.MujocoEnv.__init__(self, "tmp/pipette_model.xml", 5)
-        utils.EzPickle.__init__(self)
+        MujocoEnv.__init__(
+            self,
+            model_path="tmp/pipette_model.xml",
+            frame_skip=5,
+            observation_space=spaces.Box(low=-np.inf, high=np.inf, shape=(13,), dtype=np.float32),
+            default_camera_config={"trackbodyid": 1, "distance": 1.0},
+            render_mode=render_mode,
+        )
         
-        # Define observation and action spaces
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(13,), dtype=np.float32)
-        
+        # Define action space
         # Action space: [pipette_x, pipette_y, pipette_z, plunger]
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(4,), dtype=np.float32
+        )
         
         # Simulation parameters
         self.target_volume = 100.0  # Target volume in μL
@@ -117,9 +126,9 @@ class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         # Simulate plunger action (aspiration/dispensing)
         # In a real implementation, we'd modify the fluid level visually
         # Here we'll track it internally for simplicity
-        tip_pos = self.data.get_site_xpos('plunger')
-        source_pos = self.data.get_site_xpos('source_top')
-        dest_pos = self.data.get_site_xpos('dest_top')
+        tip_pos = self.data.site("plunger").xpos
+        source_pos = self.data.site("source_top").xpos
+        dest_pos = self.data.site("dest_top").xpos
         
         # Check if tip is in source container
         in_source = np.linalg.norm(tip_pos[:2] - source_pos[:2]) < 0.045 and tip_pos[2] < source_pos[2]
@@ -141,26 +150,35 @@ class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                 self.current_volume -= volume_change
         
         # Do the simulation
-        self.do_simulation(self.data.ctrl, self.frame_skip)
+        self.do_simulation(action, self.frame_skip)
         self.steps += 1
         
         # Calculate reward
         reward = self._get_reward(in_source, in_dest)
         
         # Check if done
-        done = self.steps >= self.max_steps or (self.current_volume == 0 and self._dispensed_correct_amount())
+        terminated = self.steps >= self.max_steps
+        truncated = False
+        
+        # Check for successful completion
+        if self.current_volume == 0 and self._dispensed_correct_amount():
+            terminated = True
+            reward += 20.0  # Bonus reward for completing the task
         
         # Get observation
-        ob = self._get_obs()
+        observation = self._get_obs()
         
-        return ob, reward, done, {'volume': self.current_volume}
+        # Return info
+        info = {'volume': self.current_volume}
+        
+        return observation, reward, terminated, truncated, info
 
     def _get_obs(self):
         # Get positions
-        pipette_pos = self.data.get_body_xpos('pipette')
-        tip_pos = self.data.get_body_xpos('tip')
-        source_pos = self.data.get_body_xpos('source')
-        dest_pos = self.data.get_body_xpos('destination')
+        pipette_pos = self.data.body("pipette").xpos
+        tip_pos = self.data.body("tip").xpos
+        source_pos = self.data.body("source").xpos
+        dest_pos = self.data.body("destination").xpos
         
         # Create observation
         obs = np.concatenate([
@@ -180,9 +198,9 @@ class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         reward -= 0.1
         
         # Check for collisions (hitting container walls)
-        tip_pos = self.data.get_site_xpos('plunger')
-        source_pos = self.data.get_body_xpos('source')
-        dest_pos = self.data.get_body_xpos('destination')
+        tip_pos = self.data.site("plunger").xpos
+        source_pos = self.data.body("source").xpos
+        dest_pos = self.data.body("destination").xpos
         
         # Distance to source and dest centers (xy plane)
         dist_to_source = np.linalg.norm(tip_pos[:2] - source_pos[:2])
@@ -200,7 +218,7 @@ class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
             reward += 0.5  # Small reward for successful aspiration
             
         if in_dest and self._dispensed_correct_amount():
-            reward += 20.0  # Large reward for completing the task
+            reward += 5.0  # Reward for completing the task
             
         return reward
 
@@ -210,12 +228,13 @@ class PipetteEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         # was dispensed into the destination container
         return abs(self.target_volume - self.current_volume) < 1.0
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         self.steps = 0
         self.current_volume = 0.0
-        mujoco_env.MujocoEnv.reset(self)
-        return self._get_obs()
+        super().reset(seed=seed)
+        observation = self._get_obs()
+        info = {}
+        return observation, info
 
-    def viewer_setup(self):
-        self.viewer.cam.distance = 1.0
-        self.viewer.cam.elevation = -20
+    def render(self):
+        return super().render()

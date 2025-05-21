@@ -4,10 +4,10 @@ import time
 
 def test_environment():
     # Create the environment
-    env = PipetteEnv()
+    env = PipetteEnv(render_mode="human")
     
     # Reset the environment
-    obs = env.reset()
+    obs, info = env.reset()
     
     print("Observation space shape:", env.observation_space.shape)
     print("Action space shape:", env.action_space.shape)
@@ -36,6 +36,13 @@ def test_environment():
         [0.3, 0, 0.15, 1.0],
         [0.3, 0, 0.15, 1.0],
         [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
+        [0.3, 0, 0.15, 1.0],
         
         # Raise from source
         [0.3, 0, 0.3, 0],
@@ -54,6 +61,13 @@ def test_environment():
         [-0.3, 0, 0.15, -1.0],
         [-0.3, 0, 0.15, -1.0],
         [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
+        [-0.3, 0, 0.15, -1.0],
         
         # Raise from destination
         [-0.3, 0, 0.3, 0],
@@ -63,7 +77,7 @@ def test_environment():
     # Run sequence
     total_reward = 0
     for i, action in enumerate(actions):
-        obs, reward, done, info = env.step(np.array(action))
+        obs, reward, terminated, truncated, info = env.step(np.array(action))
         total_reward += reward
         
         print(f"Step {i+1}:")
@@ -76,7 +90,7 @@ def test_environment():
         env.render()
         time.sleep(0.1)  # Slow down visualization
         
-        if done:
+        if terminated or truncated:
             print("Episode finished early!")
             break
     
