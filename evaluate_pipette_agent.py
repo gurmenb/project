@@ -11,7 +11,8 @@ def evaluate_agent(model_path="models/pipette_final_model.zip", episodes=10, ren
     model = PPO.load(model_path)
     
     # Create the environment
-    env = PipetteEnv()
+    render_mode = "human" if render else None
+    env = PipetteEnv(render_mode=render_mode)
     
     # Initialize statistics
     rewards = []
@@ -22,7 +23,7 @@ def evaluate_agent(model_path="models/pipette_final_model.zip", episodes=10, ren
     # Run evaluation episodes
     for episode in range(episodes):
         print(f"Episode {episode+1}/{episodes}")
-        obs = env.reset()
+        obs, info = env.reset()
         episode_reward = 0
         step_count = 0
         done = False
@@ -32,7 +33,7 @@ def evaluate_agent(model_path="models/pipette_final_model.zip", episodes=10, ren
             action, _ = model.predict(obs, deterministic=True)
             
             # Step environment
-            obs, reward, done, info = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             
@@ -42,6 +43,9 @@ def evaluate_agent(model_path="models/pipette_final_model.zip", episodes=10, ren
             
             # Store current volume for analysis
             volumes.append(info['volume'])
+            
+            # Check if episode is done
+            done = terminated or truncated
             
             # Check if max steps reached
             if step_count >= env.max_steps:
@@ -117,7 +121,7 @@ def plot_results(rewards, steps, volumes):
 def compare_with_baseline():
     """Compare trained agent with a simple rule-based baseline."""
     # Create environment
-    env = PipetteEnv()
+    env = PipetteEnv(render_mode="human")
     
     # Run baseline policy (simplified sequence of actions)
     baseline_rewards = []
@@ -127,7 +131,7 @@ def compare_with_baseline():
     episodes = 5
     for episode in range(episodes):
         print(f"Running baseline episode {episode+1}/{episodes}")
-        obs = env.reset()
+        obs, info = env.reset()
         episode_reward = 0
         step_count = 0
         
@@ -135,7 +139,7 @@ def compare_with_baseline():
         # 1. Move to source
         for _ in range(3):
             action = np.array([0.3, 0, 0.3, 0])  # Move above source
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -144,7 +148,7 @@ def compare_with_baseline():
         # 2. Lower into source
         for _ in range(2):
             action = np.array([0.3, 0, 0.15, 0])  # Lower into source
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -153,7 +157,7 @@ def compare_with_baseline():
         # 3. Aspirate
         for _ in range(12):  # Need more attempts to reach target volume
             action = np.array([0.3, 0, 0.15, 1.0])  # Aspirate
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -162,7 +166,7 @@ def compare_with_baseline():
         # 4. Move up
         for _ in range(2):
             action = np.array([0.3, 0, 0.3, 0])  # Move up
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -171,7 +175,7 @@ def compare_with_baseline():
         # 5. Move to destination
         for _ in range(3):
             action = np.array([-0.3, 0, 0.3, 0])  # Move above destination
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -180,7 +184,7 @@ def compare_with_baseline():
         # 6. Lower into destination
         for _ in range(2):
             action = np.array([-0.3, 0, 0.15, 0])  # Lower into destination
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -189,7 +193,7 @@ def compare_with_baseline():
         # 7. Dispense
         for _ in range(12):  # Need more attempts to dispense full volume
             action = np.array([-0.3, 0, 0.15, -1.0])  # Dispense
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
             step_count += 1
             env.render()
@@ -214,36 +218,3 @@ def compare_with_baseline():
     print(f"Average Reward: {baseline_avg_reward:.2f}")
     print(f"Average Steps: {baseline_avg_steps:.1f}")
     
-    # Now evaluate the trained model
-    model_path = "models/pipette_final_model.zip"
-    if os.path.exists(model_path):
-        print("\nEvaluating trained model...")
-        model_results = evaluate_agent(model_path, episodes=episodes)
-        
-        # Compare results
-        print("\n--- Comparison ---")
-        print(f"Success Rate: Baseline {baseline_success_rate:.1f}% vs Model {model_results['success_rate']:.1f}%")
-        print(f"Average Reward: Baseline {baseline_avg_reward:.2f} vs Model {model_results['avg_reward']:.2f}")
-        print(f"Average Steps: Baseline {baseline_avg_steps:.1f} vs Model {model_results['avg_steps']:.1f}")
-    else:
-        print(f"\nTrained model not found at {model_path}. Run training first.")
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Evaluate trained pipette agent")
-    parser.add_argument("--model", type=str, default="models/pipette_final_model.zip", 
-                        help="Path to the trained model")
-    parser.add_argument("--episodes", type=int, default=5, 
-                        help="Number of episodes to evaluate")
-    parser.add_argument("--no-render", action="store_true", 
-                        help="Disable rendering for faster evaluation")
-    parser.add_argument("--compare", action="store_true", 
-                        help="Compare with baseline")
-    
-    args = parser.parse_args()
-    
-    if args.compare:
-        compare_with_baseline()
-    else:
-        evaluate_agent(args.model, args.episodes, not args.no_render)

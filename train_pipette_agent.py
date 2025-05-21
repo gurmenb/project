@@ -1,5 +1,5 @@
 import os
-import gym
+import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
@@ -16,7 +16,7 @@ os.makedirs("models", exist_ok=True)
 
 def main():
     # Create the vectorized environment
-    # We'll make 4 parallel environments to speed up training
+    # We'll use 4 parallel environments to speed up training
     env = make_vec_env(
         PipetteEnv,
         n_envs=4,
@@ -75,31 +75,28 @@ def main():
 def record_video(model, video_length=500):
     """Record a video of the trained agent."""
     try:
-        from gym.wrappers import RecordVideo
-    except ImportError:
-        print("Cannot import RecordVideo wrapper. Skipping video recording.")
-        return
-    
-    # Create environment with video recording
-    os.makedirs("videos", exist_ok=True)
-    env = RecordVideo(
-        PipetteEnv(),
-        video_folder="videos",
-        episode_trigger=lambda x: True,  # Record all episodes
-        name_prefix="pipette_trained"
-    )
-    
-    # Run the model
-    obs = env.reset()
-    for _ in range(video_length):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, done, _ = env.step(action)
-        env.render()
-        if done:
-            obs = env.reset()
-    
-    env.close()
-    print("Video recorded and saved to 'videos' directory")
+        # Create environment with video recording
+        os.makedirs("videos", exist_ok=True)
+        env = gym.wrappers.RecordVideo(
+            PipetteEnv(render_mode="rgb_array"),
+            video_folder="videos",
+            episode_trigger=lambda x: True  # Record all episodes
+        )
+        
+        # Run the model
+        obs, info = env.reset()
+        for _ in range(video_length):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, _ = env.step(action)
+            env.render()
+            if terminated or truncated:
+                obs, info = env.reset()
+        
+        env.close()
+        print("Video recorded and saved to 'videos' directory")
+    except Exception as e:
+        print(f"Error recording video: {e}")
+        print("Skipping video recording.")
 
 if __name__ == "__main__":
     main()
