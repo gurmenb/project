@@ -218,3 +218,36 @@ def compare_with_baseline():
     print(f"Average Reward: {baseline_avg_reward:.2f}")
     print(f"Average Steps: {baseline_avg_steps:.1f}")
     
+    # Now evaluate the trained model
+    model_path = "models/pipette_final_model.zip"
+    if os.path.exists(model_path):
+        print("\nEvaluating trained model...")
+        model_results = evaluate_agent(model_path, episodes=episodes)
+        
+        # Compare results
+        print("\n--- Comparison ---")
+        print(f"Success Rate: Baseline {baseline_success_rate:.1f}% vs Model {model_results['success_rate']:.1f}%")
+        print(f"Average Reward: Baseline {baseline_avg_reward:.2f} vs Model {model_results['avg_reward']:.2f}")
+        print(f"Average Steps: Baseline {baseline_avg_steps:.1f} vs Model {model_results['avg_steps']:.1f}")
+    else:
+        print(f"\nTrained model not found at {model_path}. Run training first.")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Evaluate trained pipette agent")
+    parser.add_argument("--model", type=str, default="models/pipette_final_model.zip", 
+                        help="Path to the trained model")
+    parser.add_argument("--episodes", type=int, default=5, 
+                        help="Number of episodes to evaluate")
+    parser.add_argument("--no-render", action="store_true", 
+                        help="Disable rendering for faster evaluation")
+    parser.add_argument("--compare", action="store_true", 
+                        help="Compare with baseline")
+    
+    args = parser.parse_args()
+    
+    if args.compare:
+        compare_with_baseline()
+    else:
+        evaluate_agent(args.model, args.episodes, not args.no_render)
