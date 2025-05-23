@@ -1,12 +1,12 @@
 import random
 import re
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from omegaconf import OmegaConf
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
@@ -143,9 +143,3 @@ def schedule(schdl, step):
                 mix = np.clip((step - duration1) / duration2, 0.0, 1.0)
                 return (1.0 - mix) * final1 + mix * final2
     raise NotImplementedError(schdl)
-
-
-def make_dir(path):
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
