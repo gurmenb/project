@@ -1,3 +1,20 @@
+torch>=1.9.0
+torchvision>=0.10.0
+torchaudio>=0.9.0
+numpy>=1.21.0
+tensorboard>=2.7.0
+omegaconf>=2.1.0
+termcolor>=1.1.0
+gym>=0.21.0
+dm-env>=1.5
+mujoco-py>=2.1.2.14
+mujoco>=2.3.0
+pathlib2>=2.3.6
+collections-extended>=2.0.2
+seaborn>=0.11.0
+pandas>=1.3.0
+tqdm>=4.62.0
+gymnasium>=0.26.0
 gym==0.25.2
 mujoco
 stable-baselines3
@@ -18,3 +35,4 @@ opencv-python
 # ipdb==0.13.3
 # box2d-py
 # scipy
+# matplotlib>=3.5.0
