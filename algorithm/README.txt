@@ -1,6 +1,8 @@
-pipetting_ac.py - Core actor-critic algorithm with pipetting-specific adaptations
-pipetting_env.py - Mock environment for testing and development
-pipetting_config.yaml - Configuration for training
-train_pipetting.py - Full training script
-test_pipetting_system.py - Comprehensive test suite
-quick_experiment.py - Milestone experiment runners
+Algorithm
+├── actor_critic.py      # Actor and Critic networks 
+├── ppo_agent.py         # PPO algorithm implementation
+├── reward_function.py   # Reward calculation
+├── train.py            # Training loop and main script
+├── utils.py            # Helper functions
+├── config.py           # Hyperparameters and settings
+└── evaluate.py         # Testing and visualization

@@ -96,10 +96,10 @@ class Reward_Function:
 def Compute_Reward(self, state, action, next_state, target_volume = 100):
     
     # get state information from our 35D oberservation vector
-    volume = next_state[20]
-    tip_position = next_state[0:3] 
-    container_boundaries = next_state[21:24]
-    liquid_properties = next_state[24:27]
+    volume = 
+    tip_position = 
+    container_boundaries =
+    liquid_properties = 
     force_
     
     total_reward = volume_reward + time_reward + completion_reward + collisions_reward 
