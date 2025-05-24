@@ -1,32 +1,38 @@
 import numpy as np
-import torch
-from collections import defaultdict
+from collections import defaultdict, deque
+from typing import NamedTuple
+from dm_env import specs
 
 
-class PPOBuffer:
+class PPOBufferSimple:
     """
-    Buffer for collecting trajectories and computing advantages for PPO
+    Simple PPO Buffer for trajectory collection and advantage computation
+    No save/load needed - PPO uses data once then discards
     """
-    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
-        self.obs_buf = np.zeros((size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros((size, act_dim), dtype=np.float32)
-        self.rew_buf = np.zeros(size, dtype=np.float32)
-        self.ret_buf = np.zeros(size, dtype=np.float32)
-        self.val_buf = np.zeros(size, dtype=np.float32)
-        self.adv_buf = np.zeros(size, dtype=np.float32)
-        self.logp_buf = np.zeros(size, dtype=np.float32)
+    
+    def __init__(self, obs_dim, act_dim, max_size=2048, gamma=0.99, lam=0.95):
+        # Storage arrays
+        self.obs_buf = np.zeros((max_size, obs_dim), dtype=np.float32)
+        self.act_buf = np.zeros((max_size, act_dim), dtype=np.float32)
+        self.rew_buf = np.zeros(max_size, dtype=np.float32)
+        self.val_buf = np.zeros(max_size, dtype=np.float32)
+        self.logp_buf = np.zeros(max_size, dtype=np.float32)
+        self.ret_buf = np.zeros(max_size, dtype=np.float32)
+        self.adv_buf = np.zeros(max_size, dtype=np.float32)
         
+        # Parameters
         self.gamma = gamma
         self.lam = lam
+        self.max_size = max_size
+        
+        # Pointers
         self.ptr = 0
         self.path_start_idx = 0
-        self.max_size = size
         
     def store(self, obs, act, rew, val, logp):
-        """
-        Store one timestep of agent-environment interaction
-        """
-        assert self.ptr < self.max_size
+        """Store one step of agent-environment interaction"""
+        if self.ptr >= self.max_size:
+            return False  
         
         self.obs_buf[self.ptr] = obs
         self.act_buf[self.ptr] = act
@@ -35,14 +41,11 @@ class PPOBuffer:
         self.logp_buf[self.ptr] = logp
         
         self.ptr += 1
+        return True 
     
     def finish_path(self, last_val=0):
         """
-        Call this at the end of a trajectory, or when one gets cut off
-        by a timeout. This looks back in the buffer to where the trajectory
-        started, and uses rewards and value estimates from the whole trajectory
-        to compute advantage estimates with GAE-Lambda, as well as compute
-        the rewards-to-go for each state, to use as the targets for the value function.
+        Call at end of trajectory to compute advantages and returns using GAE
         """
         path_slice = slice(self.path_start_idx, self.ptr)
         rews = np.append(self.rew_buf[path_slice], last_val)
@@ -59,111 +62,74 @@ class PPOBuffer:
     
     def get(self):
         """
-        Call this at the end of an epoch to get all of the data from
-        the buffer, with advantages appropriately normalized (shifted to have
-        mean zero and std one). Also, resets some pointers in the buffer.
+        Get all data from buffer with normalized advantages
         """
-        assert self.ptr == self.max_size    # buffer has to be full before you can get
-        self.ptr, self.path_start_idx = 0, 0
+        if self.ptr == 0:
+            return None
+        
+        # Use only the data we've collected
+        data_slice = slice(0, self.ptr)
         
         # Normalize advantages
-        adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
-        self.adv_buf = (self.adv_buf - adv_mean) / (adv_std + 1e-8)
-        
-        data = dict(
-            observations=self.obs_buf,
-            actions=self.act_buf,
-            returns=self.ret_buf,
-            advantages=self.adv_buf,
-            log_probs=self.logp_buf
-        )
-        return data
-    
-    def _discount_cumsum(self, x, discount):
-        """
-        Magic from rllab for computing discounted cumulative sums of vectors.
-        Input: vector x = [x0, x1, x2]
-        Output: [x0 + discount * x1 + discount^2 * x2,  
-                 x1 + discount * x2,
-                 x2]
-        """
-        return np.array(list(reversed(np.cumsum(list(reversed(x * discount ** np.arange(len(x))))))))
-
-
-class SimpleBuffer:
-    """
-    Simpler buffer for collecting data during training
-    Used when you don't need full PPO buffer functionality
-    """
-    def __init__(self):
-        self.observations = []
-        self.actions = []
-        self.rewards = []
-        self.dones = []
-        self.values = []
-        self.log_probs = []
-        
-    def store(self, obs, action, reward, done, value=None, log_prob=None):
-        self.observations.append(obs)
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        if value is not None:
-            self.values.append(value)
-        if log_prob is not None:
-            self.log_probs.append(log_prob)
-    
-    def compute_returns_and_advantages(self, last_value=0, gamma=0.99, lam=0.95):
-        """
-        Compute returns and advantages using GAE
-        """
-        values = np.array(self.values + [last_value])
-        rewards = np.array(self.rewards)
-        dones = np.array(self.dones)
-        
-        # Compute returns
-        returns = []
-        ret = last_value
-        for i in reversed(range(len(rewards))):
-            ret = rewards[i] + gamma * ret * (1 - dones[i])
-            returns.insert(0, ret)
-        
-        # Compute advantages using GAE
-        advantages = []
-        adv = 0
-        for i in reversed(range(len(rewards))):
-            delta = rewards[i] + gamma * values[i + 1] * (1 - dones[i]) - values[i]
-            adv = delta + gamma * lam * (1 - dones[i]) * adv
-            advantages.insert(0, adv)
-        
-        return np.array(returns), np.array(advantages)
-    
-    def get_batch(self, normalize_advantages=True):
-        """
-        Get all data as a batch for training
-        """
-        returns, advantages = self.compute_returns_and_advantages()
-        
-        if normalize_advantages:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        adv_mean, adv_std = np.mean(self.adv_buf[data_slice]), np.std(self.adv_buf[data_slice])
+        self.adv_buf[data_slice] = (self.adv_buf[data_slice] - adv_mean) / (adv_std + 1e-8)
         
         return {
-            'observations': np.array(self.observations),
-            'actions': np.array(self.actions),
-            'returns': returns,
-            'advantages': advantages,
-            'log_probs': np.array(self.log_probs) if self.log_probs else None,
-            'rewards': np.array(self.rewards)
+            'observations': self.obs_buf[data_slice].copy(),
+            'actions': self.act_buf[data_slice].copy(),
+            'returns': self.ret_buf[data_slice].copy(),
+            'advantages': self.adv_buf[data_slice].copy(),
+            'old_log_probs': self.logp_buf[data_slice].copy()
         }
     
     def clear(self):
-        """Clear all stored data"""
-        self.observations.clear()
-        self.actions.clear()
-        self.rewards.clear()
-        self.dones.clear()
-        self.values.clear()
-        self.log_probs.clear()
+        """Clear the buffer for next collection phase"""
+        self.ptr = 0
+        self.path_start_idx = 0
     
-    def __len__(self):
-        return len(self.observations)
+    def is_full(self):
+        """Check if buffer is full"""
+        return self.ptr >= self.max_size
+    
+    def _discount_cumsum(self, x, discount):
+        """Compute discounted cumulative sum of vectors"""
+        return np.array([np.sum(discount**np.arange(len(x)-i) * x[i:]) for i in range(len(x))])
+
+
+class PPODataLoader:
+    """Data loader for PPO mini-batch training"""
+    
+    def __init__(self, data, batch_size, shuffle=True):
+        self.data = data
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+    
+    def __iter__(self):
+        """Generate mini-batches for training"""
+        dataset_size = len(self.data['observations'])
+        indices = np.arange(dataset_size)
+        
+        if self.shuffle:
+            np.random.shuffle(indices)
+        
+        for start in range(0, dataset_size, self.batch_size):
+            end = min(start + self.batch_size, dataset_size)
+            batch_indices = indices[start:end]
+            
+            batch = {}
+            for key, values in self.data.items():
+                batch[key] = values[batch_indices]
+            
+            yield batch
+
+
+def make_ppo_data_specs(obs_shape, action_shape):
+    """Create data specifications for PPO"""
+    return (
+        specs.Array(shape=obs_shape, dtype=np.float32, name='observation'),
+        specs.Array(shape=action_shape, dtype=np.float32, name='action'),
+        specs.Array(shape=(1,), dtype=np.float32, name='reward'),
+        specs.Array(shape=(1,), dtype=np.float32, name='value'),
+        specs.Array(shape=(1,), dtype=np.float32, name='log_prob'),
+        specs.Array(shape=(1,), dtype=np.bool_, name='done'),
+    )
