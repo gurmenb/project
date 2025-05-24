@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="particle_pipette_system">
+    <compiler angle="radian" coordinate="local" meshdir="../meshes" texturedir="../textures"/>
+    <option timestep="0.001" iterations="100" solver="Newton" tolerance="1e-10" gravity="0 0 -9.81"/>
+    
+    <size nconmax="1000" njmax="2000" nstack="1000000"/>
+    
+    <asset>
+        <material name="well_material" rgba="0.7 0.7 0.9 1"/>
+        <material name="pipette_material" rgba="0.9 0.9 0.9 1"/>
+        <material name="machine_material" rgba="0.5 0.5 0.5 1"/>
+        <material name="surface_material" rgba="0.8 0.8 0.8 1"/>
+        <material name="particle_material" rgba="0.1 0.5 0.9 0.9"/>
+        <material name="container_material" rgba="0.8 0.8 0.8 0.6"/>
+        <material name="plunger_material" rgba="0.8 0.2 0.2 1"/>
+        <material name="transparent_wall" rgba="0.9 0.9 0.9 0.3"/>
+    </asset>
+    
+    <default>
+        <geom friction="0.5 0.1 0.1" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+        <joint damping="0.1"/>
+    </default>
+    
+    <worldbody>
+        <!-- Lighting and camera -->
+        <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="0 0 -1"/>
+        <camera name="top_view" pos="0 0 1.5" xyaxes="1 0 0 0 1 0"/>
+        <camera name="side_view" pos="1.0 0 0.5" xyaxes="0 1 0 0 0 1"/>
+        
+        <!-- Surface -->
+        <body name="surface" pos="0 0 0">
+            <geom type="box" size="0.5 0.5 0.01" rgba="0.8 0.8 0.8 1" material="surface_material"/>
+        </body>
+        
+        <!-- Square wells made with box walls -->
+        <body name="well_1" pos="-0.3 -0.3 0.01">
+            <!-- Well bottom -->
+            <geom name="well_1_bottom" type="box" size="0.035 0.035 0.005" pos="0 0 -0.025" material="well_material"/>
+            <!-- Well walls (creating hollow square) -->
+            <geom name="well_1_wall_n" type="box" size="0.04 0.005 0.03" pos="0 0.035 0" material="well_material"/>
+            <geom name="well_1_wall_s" type="box" size="0.04 0.005 0.03" pos="0 -0.035 0" material="well_material"/>
+            <geom name="well_1_wall_e" type="box" size="0.005 0.04 0.03" pos="0.035 0 0" material="well_material"/>
+            <geom name="well_1_wall_w" type="box" size="0.005 0.04 0.03" pos="-0.035 0 0" material="well_material"/>
+            <site name="well_1_site" pos="0 0 0" size="0.005"/>
+        </body>
+        
+        <body name="well_2" pos="0 -0.3 0.01">
+            <geom name="well_2_bottom" type="box" size="0.035 0.035 0.005" pos="0 0 -0.025" material="well_material"/>
+            <geom name="well_2_wall_n" type="box" size="0.04 0.005 0.03" pos="0 0.035 0" material="well_material"/>
+            <geom name="well_2_wall_s" type="box" size="0.04 0.005 0.03" pos="0 -0.035 0" material="well_material"/>
+            <geom name="well_2_wall_e" type="box" size="0.005 0.04 0.03" pos="0.035 0 0" material="well_material"/>
+            <geom name="well_2_wall_w" type="box" size="0.005 0.04 0.03" pos="-0.035 0 0" material="well_material"/>
+            <site name="well_2_site" pos="0 0 0" size="0.005"/>
+        </body>
+        
+        <body name="well_3" pos="0.3 -0.3 0.01">
+            <geom name="well_3_bottom" type="box" size="0.035 0.035 0.005" pos="0 0 -0.025" material="well_material"/>
+            <geom name="well_3_wall_n" type="box" size="0.04 0.005 0.03" pos="0 0.035 0" material="well_material"/>
+            <geom name="well_3_wall_s" type="box" size="0.04 0.005 0.03" pos="0 -0.035 0" material="well_material"/>
+            <geom name="well_3_wall_e" type="box" size="0.005 0.04 0.03" pos="0.035 0 0" material="well_material"/>
+            <geom name="well_3_wall_w" type="box" size="0.005 0.04 0.03" pos="-0.035 0 0" material="well_material"/>
+            <site name="well_3_site" pos="0 0 0" size="0.005"/>
+        </body>
+        
+        <!-- Container for loose particles -->
+        <body name="particle_container" pos="0.4 0.2 0.0">
+            <geom name="container_bottom" type="box" size="0.08 0.08 0.005" pos="0 0 0" material="container_material"/>
+            <geom name="container_wall_1" type="box" size="0.005 0.08 0.02" pos="0.075 0 0.025" material="container_material"/>
+            <geom name="container_wall_2" type="box" size="0.005 0.08 0.02" pos="-0.075 0 0.025" material="container_material"/>
+            <geom name="container_wall_3" type="box" size="0.08 0.005 0.02" pos="0 0.075 0.025" material="container_material"/>
+            <geom name="container_wall_4" type="box" size="0.08 0.005 0.02" pos="0 -0.075 0.025" material="container_material"/>
+        </body>
+        
+        <!-- Particles in wells -->
+        <body name="particle_1_1" pos="-0.315 -0.315 0.017">
+            <freejoint/>
+            <geom name="p_1_1" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_1_2" pos="-0.285 -0.315 0.017">
+            <freejoint/>
+            <geom name="p_1_2" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_1_3" pos="-0.315 -0.285 0.017">
+            <freejoint/>
+            <geom name="p_1_3" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_1_4" pos="-0.285 -0.285 0.017">
+            <freejoint/>
+            <geom name="p_1_4" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_1_5" pos="-0.3 -0.3 0.017">
+            <freejoint/>
+            <geom name="p_1_5" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_1_6" pos="-0.3 -0.3 0.035">
+            <freejoint/>
+            <geom name="p_1_6" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        
+        <body name="particle_2_1" pos="-0.015 -0.315 0.017">
+            <freejoint/>
+            <geom name="p_2_1" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_2_2" pos="0.015 -0.315 0.017">
+            <freejoint/>
+            <geom name="p_2_2" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_2_3" pos="-0.015 -0.285 0.017">
+            <freejoint/>
+            <geom name="p_2_3" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="particle_2_4" pos="0.015 -0.285 0.017">
+            <freejoint/>
+            <geom name="p_2_4" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        
+        <!-- Loose particles in container -->
+        <body name="loose_particle_1" pos="0.38 0.18 0.065">
+            <freejoint/>
+            <geom name="lp_1" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="loose_particle_2" pos="0.42 0.18 0.065">
+            <freejoint/>
+            <geom name="lp_2" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="loose_particle_3" pos="0.38 0.22 0.065">
+            <freejoint/>
+            <geom name="lp_3" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="loose_particle_4" pos="0.42 0.22 0.065">
+            <freejoint/>
+            <geom name="lp_4" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        <body name="loose_particle_5" pos="0.4 0.2 0.075">
+            <freejoint/>
+            <geom name="lp_5" type="sphere" size="0.008" material="particle_material" mass="0.01"/>
+        </body>
+        
+        <!-- Box-based pipette system -->
+        <body name="pipette_base" pos="0 0 0.2">
+            <!-- XY movement -->
+            <joint name="machine_x" type="slide" axis="1 0 0" range="-0.4 0.4" damping="20"/>
+            <joint name="machine_y" type="slide" axis="0 1 0" range="-0.4 0.4" damping="20"/>
+            
+            <!-- Add mass to the main pipette body -->
+            <geom name="base_mass" type="sphere" size="0.001" pos="0 0 0" rgba="0 0 0 0" mass="1.0"/>
+            
+            <!-- Plunger mechanism (separate from Z movement) -->
+            <body name="plunger" pos="0 0 0.03">
+                <joint name="plunger_joint" type="slide" axis="0 0 1" range="0 0.08" damping="5"/>
+                
+                <!-- Square plunger head (visible on top) -->
+                <geom name="plunger_head" type="box" size="0.02 0.02 0.02" pos="0 0 0" material="plunger_material" mass="0.2"/>
+                
+                <!-- Square plunger rod (extends down into pipette body) -->
+                <geom name="plunger_rod" type="box" size="0.006 0.006 0.06" pos="0 0 -0.08" material="plunger_material" mass="0.1"/>
+                
+                <!-- Plunger seal (square plate that seals the chamber) -->
+                <!-- <geom name="plunger_seal" type="box" size="0.009 0.009 0.003" pos="0 0 -0.025" material="plunger_material" mass="0.05"/> -->
+            </body>
+            
+            <!-- Z movement for pipette body (independent of plunger) -->
+            <body name="pipette_body" pos="0 0 0">
+                <joint name="machine_z" type="slide" axis="0 0 1" range="-0.3 0.5" damping="15"/>
+                
+                <!-- Hollow rectangular pipette body made with walls -->
+                <!-- Outer walls -->
+                <geom name="pipette_wall_n" type="box" size="0.015 0.003 0.08" pos="0 0.012 -0.05" material="pipette_material" mass="0.1"/>
+                <geom name="pipette_wall_s" type="box" size="0.015 0.003 0.08" pos="0 -0.012 -0.05" material="pipette_material" mass="0.1"/>
+                <geom name="pipette_wall_e" type="box" size="0.003 0.015 0.08" pos="0.012 0 -0.05" material="pipette_material" mass="0.1"/>
+                <geom name="pipette_wall_w" type="box" size="0.003 0.015 0.08" pos="-0.012 0 -0.05" material="pipette_material" mass="0.1"/>
+                
+                <!-- Transparent inner chamber walls (smaller, creating hollow space) -->
+                <geom name="chamber_wall_n" type="box" size="0.01 0.002 0.075" pos="0 0.008 -0.045" material="transparent_wall"/>
+                <geom name="chamber_wall_s" type="box" size="0.01 0.002 0.075" pos="0 -0.008 -0.045" material="transparent_wall"/>
+                <geom name="chamber_wall_e" type="box" size="0.002 0.01 0.075" pos="0.008 0 -0.045" material="transparent_wall"/>
+                <geom name="chamber_wall_w" type="box" size="0.002 0.01 0.075" pos="-0.008 0 -0.045" material="transparent_wall"/>
+                
+                <!-- Pipette tip (hollow square tube) -->
+                <geom name="tip_wall_n" type="box" size="0.01 0.002 0.03" pos="0 0.008 -0.13" material="pipette_material" mass="0.05"/>
+                <geom name="tip_wall_s" type="box" size="0.01 0.002 0.03" pos="0 -0.008 -0.13" material="pipette_material" mass="0.05"/>
+                <geom name="tip_wall_e" type="box" size="0.002 0.01 0.03" pos="0.008 0 -0.13" material="pipette_material" mass="0.05"/>
+                <geom name="tip_wall_w" type="box" size="0.002 0.01 0.03" pos="-0.008 0 -0.13" material="pipette_material" mass="0.05"/>
+                
+                <!-- Suction zone at tip -->
+                <site name="suction_zone" pos="0 0 -0.16" size="0.02"/>
+            </body>
+        </body>
+    </worldbody>
+    
+    <actuator>
+        <!-- Movement controls -->
+        <position name="x_control" joint="machine_x" ctrlrange="-0.4 0.4" kp="100"/>
+        <position name="y_control" joint="machine_y" ctrlrange="-0.4 0.4" kp="100"/>
+        <position name="z_control" joint="machine_z" ctrlrange="-0.3 0.8" kp="100"/>
+        
+        <!-- Plunger control -->
+        <position name="plunger_control" joint="plunger_joint" ctrlrange="0 0.5" kp="50"/>
+    </actuator>
+    
+    <sensor>
+        <!-- Position sensors -->
+        <jointpos name="x_pos" joint="machine_x"/>
+        <jointpos name="y_pos" joint="machine_y"/>
+        <jointpos name="z_pos" joint="machine_z"/>
+        <jointpos name="plunger_pos" joint="plunger_joint"/>
+        
+        <!-- Velocity sensors -->
+        <jointvel name="plunger_vel" joint="plunger_joint"/>
+        
+        <!-- Site sensors -->
+        <framepos name="suction_sensor" objtype="site" objname="suction_zone"/>
+        
+        <!-- Well position sensors -->
+        <framepos name="well_1_sensor" objtype="site" objname="well_1_site"/>
+        <framepos name="well_2_sensor" objtype="site" objname="well_2_site"/>
+        <framepos name="well_3_sensor" objtype="site" objname="well_3_site"/>
+    </sensor>
+</mujoco>
