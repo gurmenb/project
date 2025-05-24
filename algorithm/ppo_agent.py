@@ -145,9 +145,6 @@ class PPOAgent:
         advantages = torch.as_tensor(batch_data['advantages'], device=self.device)
         old_log_probs = torch.as_tensor(batch_data['old_log_probs'], device=self.device)
 
-        # Normalize advantages 
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
         # Get current policy distribution
         action_distribution = self.actor(obs)
         
@@ -218,7 +215,7 @@ class PPOAgent:
         
         dataset_size = len(obs)
         
-        # Multiple epochs over the same data (PPO's key feature)
+        # Multiple epochs over the same data 
         for epoch in range(ppo_epochs):
             # Shuffle data
             indices = torch.randperm(dataset_size)
@@ -258,9 +255,7 @@ class PPOAgent:
         return all_metrics
 
     def bc(self, replay_iter):
-        """
-        Behavior cloning update (kept from HW2 for compatibility)
-        """
+        
         metrics = dict()
         batch = next(replay_iter)
 

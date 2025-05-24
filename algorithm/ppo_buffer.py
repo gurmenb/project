@@ -31,9 +31,8 @@ class PPOBufferSimple:
         
     def store(self, obs, act, rew, val, logp):
         """Store one step of agent-environment interaction"""
-        # FIXED: Check if buffer is full before storing
         if self.ptr >= self.max_size:
-            return False  # Buffer is full, can't store more
+            return False  
         
         self.obs_buf[self.ptr] = obs
         self.act_buf[self.ptr] = act
@@ -42,7 +41,7 @@ class PPOBufferSimple:
         self.logp_buf[self.ptr] = logp
         
         self.ptr += 1
-        return True  # Successfully stored
+        return True 
     
     def finish_path(self, last_val=0):
         """
