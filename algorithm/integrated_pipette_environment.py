@@ -2,7 +2,8 @@ import numpy as np
 import gym
 from gym import spaces
 from typing import Dict, List, Tuple
-import mujoco_py
+import mujoco
+import mujoco.viewer
 from pipette_physics_simulation import PipettePhysicsSimulator, PipetteConfig, Particle, PipetteEnvironmentWrapper
 
 class IntegratedPipetteEnv(gym.Env):
@@ -14,9 +15,9 @@ class IntegratedPipetteEnv(gym.Env):
     def __init__(self, mujoco_model_path: str = "particle_pipette_system.xml"):
         super().__init__()
         
-        # Initialize MuJoCo
-        self.model = mujoco_py.load_model_from_path(mujoco_model_path)
-        self.sim = mujoco_py.MjSim(self.model)
+        # Initialize MuJoCo (NEW API)
+        self.model = mujoco.MjModel.from_xml_path(mujoco_model_path)
+        self.data = mujoco.MjData(self.model)
         self.viewer = None
         
         # Initialize physics simulator
@@ -55,46 +56,47 @@ class IntegratedPipetteEnv(gym.Env):
         # Episode tracking
         self.episode_step = 0
         self.max_episode_steps = 500
-        
+            
     def _setup_mujoco_indices(self):
         """Setup indices for MuJoCo joints and actuators"""
+        import mujoco
+        
         self.joint_indices = {
-            'x': self.model.joint_name2id('machine_x'),
-            'y': self.model.joint_name2id('machine_y'),
-            'z': self.model.joint_name2id('machine_z'),
-            'plunger': self.model.joint_name2id('plunger_joint')
+            'x': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, 'machine_x'),
+            'y': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, 'machine_y'),
+            'z': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, 'machine_z'),
+            'plunger': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, 'plunger_joint')
         }
         
         self.actuator_indices = {
-            'x': self.model.actuator_name2id('x_control'),
-            'y': self.model.actuator_name2id('y_control'),
-            'z': self.model.actuator_name2id('z_control'),
-            'plunger': self.model.actuator_name2id('plunger_control')
+            'x': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'x_control'),
+            'y': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'y_control'),
+            'z': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'z_control'),
+            'plunger': mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'plunger_control')
         }
         
         # Get particle body indices
         self.particle_body_indices = {}
         for i in range(1, 7):  # well 1 particles
             try:
-                body_id = self.model.body_name2id(f'particle_1_{i}')
+                body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f'particle_1_{i}')
                 self.particle_body_indices[f'particle_1_{i}'] = body_id
             except:
                 pass
         
         for i in range(1, 5):  # well 2 particles
             try:
-                body_id = self.model.body_name2id(f'particle_2_{i}')
+                body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f'particle_2_{i}')
                 self.particle_body_indices[f'particle_2_{i}'] = body_id
             except:
                 pass
         
         for i in range(1, 6):  # loose particles
             try:
-                body_id = self.model.body_name2id(f'loose_particle_{i}')
+                body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f'loose_particle_{i}')
                 self.particle_body_indices[f'loose_particle_{i}'] = body_id
             except:
                 pass
-    
     def _initialize_particles(self):
         """Initialize physics simulation particles based on MuJoCo model"""
         particle_id = 0
@@ -134,17 +136,17 @@ class IntegratedPipetteEnv(gym.Env):
     def _sync_particles_to_mujoco(self):
         """Synchronize physics simulation particle positions with MuJoCo"""
         for i, particle in enumerate(self.physics_sim.particles):
-            # Map physics particle to MuJoCo body
             body_name = self._get_mujoco_body_name(i)
             if body_name in self.particle_body_indices:
                 body_id = self.particle_body_indices[body_name]
                 
-                # Update MuJoCo body position
                 if not particle.is_held:
-                    # Only update free particles, held particles follow pipette
-                    self.sim.data.qpos[body_id*7:body_id*7+3] = particle.position
-                    self.sim.data.qvel[body_id*6:body_id*6+3] = particle.velocity
-    
+                    # Update MuJoCo body position (NEW API - different indexing)
+                    joint_adr = self.model.body_jntadr[body_id]
+                    if joint_adr >= 0:
+                        self.data.qpos[joint_adr:joint_adr+3] = particle.position
+                        self.data.qvel[joint_adr:joint_adr+3] = particle.velocity
+
     def _get_mujoco_body_name(self, particle_index: int) -> str:
         """Map physics particle index to MuJoCo body name"""
         if particle_index < 6:
@@ -204,24 +206,21 @@ class IntegratedPipetteEnv(gym.Env):
         return features
     
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
-        """Execute one environment step"""
-        self.episode_step += 1
+        # Apply action to MuJoCo
+        self.data.ctrl[self.actuator_indices['x']] = action[0]
+        self.data.ctrl[self.actuator_indices['y']] = action[1]
+        self.data.ctrl[self.actuator_indices['z']] = action[2]
         
-        # Apply action to MuJoCo (for visualization)
-        self.sim.data.ctrl[self.actuator_indices['x']] = action[0]
-        self.sim.data.ctrl[self.actuator_indices['y']] = action[1]
-        self.sim.data.ctrl[self.actuator_indices['z']] = action[2]
-        # Note: We don't apply plunger action to MuJoCo, physics sim handles it
-        
-        # Step MuJoCo simulation
-        self.sim.step()
+        # Step MuJoCo simulation (NEW API)
+        mujoco.mj_step(self.model, self.data)
         
         # Get current MuJoCo state
         mujoco_state = {
-            'x_pos': self.sim.data.qpos[self.joint_indices['x']],
-            'y_pos': self.sim.data.qpos[self.joint_indices['y']],
-            'z_pos': self.sim.data.qpos[self.joint_indices['z']]
+            'x_pos': self.data.qpos[self.joint_indices['x']],
+            'y_pos': self.data.qpos[self.joint_indices['y']],
+            'z_pos': self.data.qpos[self.joint_indices['z']]
         }
+
         
         # Step physics simulation with RL-controlled plunger
         physics_obs, physics_reward, physics_done, physics_info = self.env_wrapper.step(mujoco_state, action)
@@ -288,12 +287,10 @@ class IntegratedPipetteEnv(gym.Env):
         
         return particles_in_well_3 >= 2  # Success if 2+ particles transferred
     
-    def reset(self) -> np.ndarray:
+    def reset_model(self):
         """Reset the environment"""
-        self.episode_step = 0
-        
-        # Reset MuJoCo simulation
-        self.sim.reset()
+        # Reset MuJoCo simulation (NEW API)
+        mujoco.mj_resetData(self.model, self.data)
         
         # Reset physics simulation
         self.physics_sim.reset()
@@ -302,18 +299,27 @@ class IntegratedPipetteEnv(gym.Env):
         self._initialize_particles()
         
         return self._get_observation()
-    
+
     def render(self, mode='human'):
         """Render the environment"""
         if self.viewer is None:
-            self.viewer = mujoco_py.MjViewer(self.sim)
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
         
-        self.viewer.render()
+        # Update viewer
+        self.viewer.sync()
         
         if mode == 'rgb_array':
-            # Return RGB array for recording
-            width, height = 640, 480
-            return self.sim.render(width, height, camera_name='top_view')
+            # For recording (more complex with new API)
+            return self._render_rgb_array()
+
+    def _render_rgb_array(self):
+        """Render RGB array for recording"""
+        import mujoco.viewer
+        
+        # Create offscreen renderer
+        renderer = mujoco.Renderer(self.model, height=480, width=640)
+        renderer.update_scene(self.data)
+        return renderer.render()
     
     def close(self):
         """Close the environment"""
