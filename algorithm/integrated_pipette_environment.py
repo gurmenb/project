@@ -15,7 +15,6 @@ class IntegratedPipetteEnv(gym.Env):
     def __init__(self, mujoco_model_path: str = "particle_pipette_system.xml"):
         super().__init__()
         
-        # Initialize MuJoCo (NEW API)
         self.model = mujoco.MjModel.from_xml_path(mujoco_model_path)
         self.data = mujoco.MjData(self.model)
         self.viewer = None
@@ -28,6 +27,7 @@ class IntegratedPipetteEnv(gym.Env):
             max_suction_depth=0.08,
             suction_force_max=8.0
         )
+        
         self.physics_sim = PipettePhysicsSimulator(config)
         self.env_wrapper = PipetteEnvironmentWrapper(self.physics_sim)
         
