@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import ppo_agent
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
@@ -10,7 +9,7 @@ import numpy as np
 import torch
 from collections import deque
 
-# Import your modules
+# Import your PPO modules (unchanged)
 from ppo_agent import PPOAgent
 from ppo_buffer import PPOBufferSimple, PPODataLoader
 from reward_function import make_pipetting_reward_function
@@ -18,109 +17,15 @@ from config import get_config
 import utils
 from logger import Logger
 
+# Import partner's MuJoCo environment (NEW)
+from integrated_pipette_environment import IntegratedPipetteEnv
+
 torch.backends.cudnn.benchmark = True
-
-
-class PipettingEnvironment:
-    """
-    Pipetting Environment (replace with your partner's MuJoCo environment)
-    
-    Observation Space (14D): liquid_in_plunger, balls_in_plunger, source_amount, target_amount,
-                            source_pos(xyz), target_pos(xyz), aspiration_pressure, dispersion_pressure,
-                            task_phase, submerged
-    Action Space (6D): pipette_pos(xyz), plunger_pos, plunger_force, plunger_speed
-    """
-    
-    def __init__(self, max_episode_steps=200):
-        self.max_episode_steps = max_episode_steps
-        self.current_step = 0
-        
-        # Environment state
-        self.source_amount = 50
-        self.target_amount = 0
-        self.balls_in_plunger = 0
-        self.task_phase = 0
-        
-    def observation_spec(self):
-        return {'shape': (14,), 'dtype': np.float32}
-    
-    def action_spec(self):
-        return {'shape': (6,), 'dtype': np.float32, 'minimum': -1.0, 'maximum': 1.0}
-    
-    def reset(self):
-        self.current_step = 0
-        self.source_amount = 50
-        self.target_amount = 0
-        self.balls_in_plunger = 0
-        self.task_phase = 0
-        return self._get_observation()
-    
-    def step(self, action):
-        self.current_step += 1
-        
-        # Parse action
-        pipette_pos = action[0:3]
-        plunger_pos = action[3]
-        plunger_force = action[4]
-        plunger_speed = action[5]
-        
-        # Dummy physics simulation (replace with MuJoCo)
-        if self.current_step < 50:
-            self.task_phase = 0  # approach
-        elif self.current_step < 100:
-            self.task_phase = 1  # aspirate
-            if plunger_pos < -0.5 and plunger_force > 0.3:
-                if self.balls_in_plunger == 0:
-                    transfer_amount = min(20, self.source_amount)
-                    noise = np.random.normal(0, 2)
-                    actual_transfer = max(0, min(50, transfer_amount + noise))
-                    self.balls_in_plunger = actual_transfer
-                    self.source_amount -= actual_transfer
-        elif self.current_step < 150:
-            self.task_phase = 2  # transfer
-        else:
-            self.task_phase = 3  # dispense
-            if plunger_pos > 0.5 and plunger_force > 0.3:
-                if self.balls_in_plunger > 0:
-                    target_pos_xy = np.array([0.2, 0.5])
-                    distance = np.linalg.norm(pipette_pos[:2] - target_pos_xy)
-                    if distance < 0.15:
-                        self.target_amount += self.balls_in_plunger
-                        self.balls_in_plunger = 0
-                    else:
-                        self.balls_in_plunger = 0
-        
-        obs = self._get_observation()
-        done = self.current_step >= self.max_episode_steps
-        
-        info = {
-            'success': abs(self.target_amount - 20) <= 3 if done else False,
-            'collision': False,
-            'task_phase': self.task_phase,
-            'balls_transferred': self.target_amount
-        }
-        
-        return obs, 0.0, done, info
-    
-    def _get_observation(self):
-        """Get 14D observation"""
-        return np.array([
-            float(self.balls_in_plunger > 0),  # liquid_in_plunger
-            float(self.balls_in_plunger),      # balls_in_plunger
-            float(self.source_amount),         # source_amount
-            float(self.target_amount),         # target_amount
-            0.0, 0.5, 0.1,                    # source_pos (x, y, z)
-            0.2, 0.5, 0.1,                    # target_pos (x, y, z)
-            1.0,                              # aspiration_pressure
-            1.0,                              # dispersion_pressure
-            float(self.task_phase),           # task_phase
-            0.0                               # submerged
-        ], dtype=np.float32)
 
 
 class PipettingWorkspace:
     """
-    Main training workspace (HW2 style)
+    Main training workspace - UPDATED for MuJoCo integration
     """
     
     def __init__(self, cfg):
@@ -132,13 +37,16 @@ class PipettingWorkspace:
         self.device = torch.device(cfg['device'])
         self.setup()
         
-        # Create agent
-        obs_spec = self.train_env.observation_spec()
-        action_spec = self.train_env.action_spec()
+        # Create agent with MuJoCo specs
+        obs_spec = self.train_env.observation_space
+        action_spec = self.train_env.action_space
+        
+        print(f"MuJoCo Observation Space: {obs_spec.shape}")  # Should be (25,)
+        print(f"MuJoCo Action Space: {action_spec.shape}")    # Should be (4,)
         
         self.agent = PPOAgent(
-            obs_shape=obs_spec['shape'],
-            action_shape=action_spec['shape'],
+            obs_shape=obs_spec.shape,
+            action_shape=action_spec.shape,
             device=self.device,
             lr=cfg['lr'],
             hidden_dim=cfg['hidden_dim'],
@@ -155,20 +63,24 @@ class PipettingWorkspace:
         # Create logger
         self.logger = Logger(self.work_dir, use_tb=self.cfg['use_tb'])
         
-        # Create environments
-        self.train_env = PipettingEnvironment(max_episode_steps=self.cfg['max_episode_steps'])
-        self.eval_env = PipettingEnvironment(max_episode_steps=self.cfg['max_episode_steps'])
+        # Create MuJoCo environments (UPDATED)
+        xml_path = "particle_pipette_system.xml"  # Make sure this file exists
+        self.train_env = IntegratedPipetteEnv(xml_path)
+        self.eval_env = IntegratedPipetteEnv(xml_path)
         
-        # Create PPO buffer
+        # Create PPO buffer with MuJoCo dimensions (UPDATED)
+        obs_dim = self.train_env.observation_space.shape[0]  # 25
+        act_dim = self.train_env.action_space.shape[0]       # 4
+        
         self.ppo_buffer = PPOBufferSimple(
-            obs_dim=14,
-            act_dim=6,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
             max_size=self.cfg['buffer_size'],
             gamma=self.cfg.get('gamma', 0.99),
             lam=self.cfg.get('lam', 0.95)
         )
         
-        # Create reward function
+        # Keep your custom reward function for additional rewards (OPTIONAL)
         self.reward_fn = make_pipetting_reward_function(
             target_volume=self.cfg['target_volume'],
             w_volume=self.cfg['w_volume'],
@@ -199,8 +111,8 @@ class PipettingWorkspace:
         return self.global_step
     
     def collect_episode(self):
-        """Collect one episode of experience"""
-        obs = self.train_env.reset()
+        """Collect one episode of experience - UPDATED for MuJoCo"""
+        obs = self.train_env.reset()  # Now returns 25D observation
         self.reward_fn.reset()
         
         episode_reward = 0
@@ -211,9 +123,9 @@ class PipettingWorkspace:
             if self.ppo_buffer.is_full():
                 break
                 
-            # Get action and value from agent
+            # Get action and value from agent (no changes needed)
             with torch.no_grad():
-                action = self.agent.act(obs, eval_mode=False)
+                action = self.agent.act(obs, eval_mode=False)  # 4D action: [x, y, z, plunger]
                 value = self.agent.get_value(obs)
                 
                 # Get log probability
@@ -222,11 +134,15 @@ class PipettingWorkspace:
                 dist = self.agent.actor(obs_tensor)
                 log_prob = dist.log_prob(action_tensor).sum(dim=-1).item()
             
-            # Take environment step
-            next_obs, env_reward, done, info = self.train_env.step(action)
+            # Take environment step (UPDATED for physics-primary rewards)
+            next_obs, mujoco_reward, done, info = self.train_env.step(action)
             
-            # Compute custom reward
-            reward = self.reward_fn.compute_reward(obs, action, info, done)
+            # IMPORTANT: Physics rewards are primary (aspiration +2.0, dispensing +1.5, etc.)
+            physics_info = info.get('physics_info', {})
+            physics_reward = sum(physics_info.get('reward_components', {}).values())
+            
+            # Combined reward: Physics primary + MuJoCo supplementary  
+            reward = physics_reward + 0.3 * mujoco_reward  # Physics dominates
             
             # Store in buffer
             stored = self.ppo_buffer.store(obs, action, reward, value, log_prob)
@@ -246,10 +162,12 @@ class PipettingWorkspace:
                 self._global_episode += 1
                 break
         
-        return episode_reward, episode_length, info.get('success', False)
+        # Extract success information from MuJoCo environment
+        success = info.get('task_completed', False)
+        return episode_reward, episode_length, success
     
     def update_agent(self):
-        """Update PPO agent with collected data"""
+        """Update PPO agent with collected data (NO CHANGES NEEDED)"""
         # Get data from buffer
         data = self.ppo_buffer.get()
         if data is None:
@@ -290,17 +208,16 @@ class PipettingWorkspace:
         return total_metrics
     
     def eval(self, num_eval_episodes=None):
-        """Evaluate current policy"""
+        """Evaluate current policy - UPDATED for MuJoCo"""
         num_episodes = num_eval_episodes or self.cfg['num_eval_episodes']
         
         total_reward = 0
         total_success = 0
         total_steps = 0
+        particles_transferred = 0
         
         for episode in range(num_episodes):
             obs = self.eval_env.reset()
-            eval_reward_fn = make_pipetting_reward_function(target_volume=self.cfg['target_volume'])
-            eval_reward_fn.reset()
             
             episode_reward = 0
             episode_steps = 0
@@ -309,8 +226,7 @@ class PipettingWorkspace:
                 with torch.no_grad(), utils.eval_mode(self.agent):
                     action = self.agent.act(obs, eval_mode=True)
                 
-                next_obs, _, done, info = self.eval_env.step(action)
-                reward = eval_reward_fn.compute_reward(obs, action, info, done)
+                next_obs, reward, done, info = self.eval_env.step(action)
                 
                 episode_reward += reward
                 episode_steps += 1
@@ -319,25 +235,34 @@ class PipettingWorkspace:
                 obs = next_obs
                 
                 if done:
-                    total_success += float(info.get('success', False))
+                    total_success += float(info.get('task_completed', False))
+                    particles_transferred += info.get('particles_held', 0)
                     break
             
             total_reward += episode_reward
         
-        # Log evaluation results
+        # Log evaluation results with MuJoCo-specific metrics
         with self.logger.log_and_dump_ctx(self.global_frame, ty='eval') as log:
             log('episode_reward', total_reward / num_episodes)
             log('episode_success', total_success / num_episodes)
             log('episode_length', total_steps / num_episodes)
+            log('particles_transferred', particles_transferred / num_episodes)
             log('episode', self.global_episode)
             log('step', self.global_step)
             log('eval_total_time', self.timer.total_time())
     
     def train(self):
-        """Main training loop"""
-        print("Starting PPO Training...")
+        """Main training loop (NO CHANGES NEEDED)"""
+        print("Starting PPO Training with MuJoCo Physics!")
         print(f"Device: {self.device}")
+        print(f"Observation dim: {self.train_env.observation_space.shape}")
+        print(f"Action dim: {self.train_env.action_space.shape}")
         print(f"Buffer size: {self.cfg['buffer_size']}")
+        print("Physics Simulation Features:")
+        print("  - Realistic particle aspiration/dispensing")
+        print("  - 4 pipette states: Idle → Aspirating → Holding → Dispensing") 
+        print("  - RL controls plunger directly (not MuJoCo)")
+        print("  - Rich physics rewards: +2.0 aspiration, +1.5 dispensing")
         print("="*50)
         
         train_until_step = utils.Until(self.cfg['num_train_frames'])
@@ -346,7 +271,7 @@ class PipettingWorkspace:
         while train_until_step(self.global_step):
             # Collect episodes until buffer is full or we have enough data
             episodes_this_round = 0
-            while not self.ppo_buffer.is_full() and episodes_this_round < 10:  # Limit episodes per round
+            while not self.ppo_buffer.is_full() and episodes_this_round < 10:
                 episode_reward, episode_length, success = self.collect_episode()
                 
                 self.episode_rewards.append(episode_reward)
@@ -381,7 +306,7 @@ class PipettingWorkspace:
                 self.save_snapshot()
     
     def save_snapshot(self):
-        """Save training snapshot"""
+        """Save training snapshot (NO CHANGES NEEDED)"""
         snapshot = self.work_dir / 'snapshot.pt'
         keys_to_save = ['agent', 'timer', '_global_step', '_global_episode']
         payload = {k: self.__dict__[k] for k in keys_to_save}
@@ -389,7 +314,7 @@ class PipettingWorkspace:
             torch.save(payload, f)
     
     def load_snapshot(self):
-        """Load training snapshot"""
+        """Load training snapshot (NO CHANGES NEEDED)"""
         snapshot = self.work_dir / 'snapshot.pt'
         with snapshot.open('rb') as f:
             payload = torch.load(f)
@@ -403,7 +328,7 @@ def main():
     # Get configuration
     cfg = get_config()
     
-    print("PIPETTING PPO TRAINING")
+    print("PIPETTING PPO TRAINING WITH MUJOCO")
     print("="*50)
     print(f"PyTorch version: {torch.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
