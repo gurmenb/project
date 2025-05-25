@@ -43,7 +43,7 @@ class IntegratedPipetteEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(25,),  # Adjust based on actual observation size
+            shape=(26,),  # Adjust based on actual observation size
             dtype=np.float32
         )
         
@@ -97,6 +97,7 @@ class IntegratedPipetteEnv(gym.Env):
                 self.particle_body_indices[f'loose_particle_{i}'] = body_id
             except:
                 pass
+    
     def _initialize_particles(self):
         """Initialize physics simulation particles based on MuJoCo model"""
         particle_id = 0
@@ -158,19 +159,19 @@ class IntegratedPipetteEnv(gym.Env):
     
     def _get_observation(self) -> np.ndarray:
         """Get combined observation from MuJoCo and physics simulation"""
-        # MuJoCo state
+        # MuJoCo state - FIXED: Changed all self.sim.data to self.data
         joint_positions = np.array([
-            self.sim.data.qpos[self.joint_indices['x']],
-            self.sim.data.qpos[self.joint_indices['y']],
-            self.sim.data.qpos[self.joint_indices['z']],
-            self.sim.data.qpos[self.joint_indices['plunger']]
+            self.data.qpos[self.joint_indices['x']],
+            self.data.qpos[self.joint_indices['y']],
+            self.data.qpos[self.joint_indices['z']],
+            self.data.qpos[self.joint_indices['plunger']]
         ])
         
         joint_velocities = np.array([
-            self.sim.data.qvel[self.joint_indices['x']],
-            self.sim.data.qvel[self.joint_indices['y']],
-            self.sim.data.qvel[self.joint_indices['z']],
-            self.sim.data.qvel[self.joint_indices['plunger']]
+            self.data.qvel[self.joint_indices['x']],
+            self.data.qvel[self.joint_indices['y']],
+            self.data.qvel[self.joint_indices['z']],
+            self.data.qvel[self.joint_indices['plunger']]
         ])
         
         # Physics simulation state
@@ -235,6 +236,7 @@ class IntegratedPipetteEnv(gym.Env):
         reward = self._calculate_reward(physics_reward, physics_info)
         
         # Check if episode is done
+        self.episode_step += 1
         done = (self.episode_step >= self.max_episode_steps or 
                 physics_done or 
                 self._check_task_completion())
@@ -263,11 +265,11 @@ class IntegratedPipetteEnv(gym.Env):
         if particles_held > 0:
             total_reward += 0.1 * particles_held
         
-        # Penalize excessive movement
+        # Penalize excessive movement - FIXED: Changed self.sim.data to self.data
         joint_vels = np.array([
-            self.sim.data.qvel[self.joint_indices['x']],
-            self.sim.data.qvel[self.joint_indices['y']],
-            self.sim.data.qvel[self.joint_indices['z']]
+            self.data.qvel[self.joint_indices['x']],
+            self.data.qvel[self.joint_indices['y']],
+            self.data.qvel[self.joint_indices['z']]
         ])
         movement_penalty = np.sum(np.square(joint_vels)) * 0.01
         total_reward -= movement_penalty
@@ -286,6 +288,22 @@ class IntegratedPipetteEnv(gym.Env):
                 particles_in_well_3 += 1
         
         return particles_in_well_3 >= 2  # Success if 2+ particles transferred
+    
+    def reset(self):
+        """Reset the environment - ADDED this method"""
+        # Reset MuJoCo simulation (NEW API)
+        mujoco.mj_resetData(self.model, self.data)
+        
+        # Reset physics simulation
+        self.physics_sim.reset()
+        
+        # Re-initialize particles
+        self._initialize_particles()
+        
+        # Reset episode step counter
+        self.episode_step = 0
+        
+        return self._get_observation()
     
     def reset_model(self):
         """Reset the environment"""
