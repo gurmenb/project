@@ -15,7 +15,8 @@ import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    import mujoco_py
+    import mujoco
+    import mujoco.viewer
     MUJOCO_AVAILABLE = True
 except ImportError:
     MUJOCO_AVAILABLE = False
@@ -108,8 +109,11 @@ class TestSuite:
             if not os.path.exists(self.xml_path):
                 raise FileNotFoundError(f"XML file not found: {self.xml_path}")
             
-            model = mujoco_py.load_model_from_path(self.xml_path)
-            sim = mujoco_py.MjSim(model)
+            # model = mujoco_py.load_model_from_path(self.xml_path)
+            # sim = mujoco_py.MjSim(model)
+
+            model = mujoco.MjModel.from_xml_path(xml_path)
+            sim = mujoco.MjData(model)
             
             print(f"   ✓ Successfully loaded MuJoCo model from {self.xml_path}")
             print(f"   ✓ Model has {model.nbody} bodies, {model.njnt} joints")
@@ -368,7 +372,7 @@ def interactive_demo():
     try:
         # Try to use the full environment
         if MUJOCO_AVAILABLE:
-            xml_path = "particle_pipette_system.xml"
+            xml_path = "simulation/particle_pipette_system.xml"
             if not os.path.exists(xml_path):
                 print("Main XML not found, creating test XML...")
                 xml_path = create_sample_xml()

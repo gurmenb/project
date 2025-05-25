@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="test_pipette">
+    <worldbody>
+        <body name="pipette_base" pos="0 0 0.2">
+            <joint name="machine_x" type="slide" axis="1 0 0" range="-0.4 0.4"/>
+            <joint name="machine_y" type="slide" axis="0 1 0" range="-0.4 0.4"/>
+            <inertial pos="0 0 0" mass="1.0" diaginertia="0.1 0.1 0.1"/>
+            
+            <body name="pipette_body" pos="0 0 0">
+                <joint name="machine_z" type="slide" axis="0 0 1" range="-0.3 0.1"/>
+                <inertial pos="0 0 -0.08" mass="0.8" diaginertia="0.05 0.05 0.08"/>
+                <geom name="pipette_wall" type="box" size="0.015 0.015 0.08" pos="0 0 -0.05" mass="0.1"/>
+                
+                <body name="plunger" pos="0 0 0.03">
+                    <joint name="plunger_joint" type="slide" axis="0 0 1" range="0 0.04"/>
+                    <geom name="plunger_head" type="box" size="0.015 0.015 0.015" pos="0 0 0" mass="0.1"/>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+    
+    <actuator>
+        <position name="x_control" joint="machine_x" ctrlrange="-0.4 0.4" kp="100"/>
+        <position name="y_control" joint="machine_y" ctrlrange="-0.4 0.4" kp="100"/>
+        <position name="z_control" joint="machine_z" ctrlrange="-0.3 0.1" kp="100"/>
+        <position name="plunger_control" joint="plunger_joint" ctrlrange="0 0.04" kp="50"/>
+    </actuator>
+</mujoco>
