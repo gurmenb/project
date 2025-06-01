@@ -17,10 +17,8 @@ class PipettingRewardFunction:
     def __init__(self, 
                  w_volume=10.0,      # Volume accuracy weight
                  w_completion=50.0,  # Completion bonus weight
-                 w_time=0.01,        # Time efficiency weight
                  w_collision=2.0,    # Collision penalty weight
                  w_drop=5.0,         # Drop penalty weight
-                 w_contamination=3.0, # Contamination penalty weight
                  w_miss=2.0,         # Miss penalty weight
                  w_jerk=0.1,         # Jerk penalty weight
                  target_volume=20):  # Target number of balls to transfer
@@ -28,10 +26,8 @@ class PipettingRewardFunction:
         self.weights = {
             'volume': w_volume,
             'completion': w_completion,
-            'time': w_time,
             'collision': w_collision,
             'drop': w_drop,
-            'contamination': w_contamination,
             'miss': w_miss,
             'jerk': w_jerk
         }
@@ -60,12 +56,9 @@ class PipettingRewardFunction:
         target_amount = obs[3]
         task_phase = int(obs[12])
         
-        # 1. Volume accuracy rewards
+        # 1. Volume accuracy rewards (not normalized to state)
         volume_reward = self._volume_accuracy_reward(balls_in_plunger, target_amount, task_phase, done)
         reward += self.weights['volume'] * volume_reward
-        
-        # 2. Time efficiency penalty
-        reward -= self.weights['time']
         
         # 3. Completion bonus
         if done:
@@ -77,10 +70,6 @@ class PipettingRewardFunction:
         # 4. Progressive rewards for good behavior
         progress_reward = self._progress_reward(task_phase, balls_in_plunger, target_amount)
         reward += progress_reward
-        
-        # 5. Collision penalty
-        if info and info.get('collision', False):
-            reward -= self.weights['collision']
         
         # 6. Drop penalty
         drop_penalty = self._drop_penalty(balls_in_plunger, task_phase)
@@ -105,10 +94,7 @@ class PipettingRewardFunction:
         
         # Mid-check: Correct aspiration from source
         if task_phase == 1:  # Aspirating
-            if balls_in_plunger > 0:
-                reward += 1.0
-                if balls_in_plunger >= self.target_volume * 0.8:
-                    reward += 2.0
+            reward -= abs(balls_in_plunger - target_amount)
         
         # Final check: Correct final volume in target
         if done:
@@ -121,6 +107,8 @@ class PipettingRewardFunction:
     
     def _progress_reward(self, task_phase, balls_in_plunger, target_amount):
         """Reward for making progress through the task phases"""
+        # change to penality instead of reward 
+        # progress -> penality 
         reward = 0.0
         
         # Small rewards for reaching each phase
@@ -143,23 +131,9 @@ class PipettingRewardFunction:
     
     def _drop_penalty(self, balls_in_plunger, task_phase):
         """Penalty for dropping balls unexpectedly"""
-        if task_phase == 2 and balls_in_plunger == 0:
+        if task_phase == 2 and balls_in_plunger < whatever picked:
+            # Is drop beign simulated 
             return 0.5
-        return 0.0
-    
-    def _miss_penalty(self, obs, action, task_phase):
-        """Penalty for missing target container (spilling)"""
-        if task_phase != 3:
-            return 0.0
-        
-        pipette_pos = action[:3]
-        target_pos = obs[7:10]
-        
-        distance = np.linalg.norm(pipette_pos[:2] - target_pos[:2])
-        
-        if distance > 0.2:
-            return distance * 2
-        
         return 0.0
     
     def _jerk_penalty(self, action):
