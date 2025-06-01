@@ -10,6 +10,14 @@ class PipetteState(Enum):
     HOLDING = "holding"
     DISPENSING = "dispensing"
 
+class TaskPhase(Enum):
+    APPROACH_SOURCE = "approach_source"
+    ASPIRATE = "aspirate"
+    TRANSPORT = "transport"
+    APPROACH_TARGET = "approach_target"
+    DISPENSE = "dispense"
+    COMPLETE = "complete"
+
 @dataclass
 class Particle:
     """Represents a single particle/ball in the simulation"""
@@ -20,40 +28,78 @@ class Particle:
     mass: float = 0.01
     is_held: bool = False
     well_id: Optional[int] = None  # Which well it belongs to (if any)
+    original_well: Optional[int] = None  # Original well for tracking transfers
 
 @dataclass
 class PipetteConfig:
-    """Configuration parameters for the pipette system"""
+    """Configuration parameters updated for compact world"""
     # Physical parameters
-    tip_radius: float = 0.008  # Inner radius of pipette tip
-    max_capacity: int = 3      # Maximum number of particles that can be held
-    suction_range: float = 0.025  # Maximum distance for suction effect
+    tip_radius: float = 0.008
+    max_capacity: int = 3
+    suction_range: float = 0.03  # Slightly larger for bigger wells
     
-    # Plunger parameters
-    plunger_travel: float = 0.08  # Maximum plunger travel distance
-    min_suction_depth: float = 0.02  # Minimum plunger depth for suction
-    max_suction_depth: float = 0.08  # Maximum effective suction depth
+    # Volume parameters (in terms of particle count)
+    target_aspiration_volume: int = 2
+    min_aspiration_volume: int = 1
+    max_aspiration_volume: int = 3
+    
+    # Plunger parameters - UPDATED
+    plunger_travel: float = 0.08  # Matches XML joint range
+    min_suction_depth: float = 0.02
+    max_suction_depth: float = 0.08
     
     # Physics parameters
-    suction_force_max: float = 5.0    # Maximum suction force (N)
-    dispense_force: float = 3.0       # Force for dispensing particles
-    particle_cohesion: float = 0.1    # Attraction between particles
-    air_resistance: float = 0.5       # Air resistance coefficient
+    suction_force_max: float = 5.0
+    dispense_force: float = 3.0
+    particle_cohesion: float = 0.1
+    air_resistance: float = 0.5
     
-    # Timing parameters
-    aspiration_time: float = 0.5      # Time needed for full aspiration
-    dispense_time: float = 0.3        # Time needed for dispensing
+    # NEW: Well positions matching your XML
+    well_radius: float = 0.055  # Bigger wells (0.05 + margin)
+
+@dataclass
+class AspirationEvent:
+    """Records an aspiration event for reward calculation"""
+    timestamp: float
+    particles_aspirated: List[int]  # Particle IDs
+    volume_aspirated: int  # Number of particles
+    plunger_depth: float
+    pipette_position: np.ndarray
+    source_well: Optional[int]
+    was_correct_timing: bool
+    was_correct_volume: bool
+
+@dataclass
+class DispensingEvent:
+    """Records a dispensing event for reward calculation"""
+    timestamp: float
+    particles_dispensed: List[int]  # Particle IDs
+    volume_dispensed: int  # Number of particles
+    plunger_depth: float
+    pipette_position: np.ndarray
+    target_well: Optional[int]
+    was_correct_position: bool
+    was_correct_volume: bool
+
+@dataclass
+class BallLossEvent:
+    """Records when balls are lost unexpectedly"""
+    timestamp: float
+    particle_id: int
+    loss_position: np.ndarray
+    expected_state: str  # What state the ball should have been in
+
+@dataclass
+class PhaseViolationEvent:
+    """Records task sequence violations"""
+    timestamp: float
+    expected_phase: TaskPhase
+    actual_action: str
+    violation_type: str
 
 class PipettePhysicsSimulator:
     """
-    Simulates the physics of particle aspiration and dispensing in a pipette system.
-    
-    Key Features:
-    - Realistic suction force based on plunger depth and tip proximity
-    - Limited capacity with priority-based particle selection
-    - Fluid dynamics simulation for particle movement
-    - State-based pipette operation (idle, aspirating, holding, dispensing)
-    - Multi-particle interaction and cohesion effects
+    Enhanced physics simulator with detailed reward component tracking
     """
     
     def __init__(self, config: PipetteConfig = None):
@@ -61,20 +107,39 @@ class PipettePhysicsSimulator:
         self.particles: List[Particle] = []
         self.held_particles: List[Particle] = []
         self.pipette_state = PipetteState.IDLE
+        self.task_phase = TaskPhase.APPROACH_SOURCE
         
         # Pipette position and state
         self.pipette_tip_pos = np.array([0.0, 0.0, 0.0])
-        self.plunger_position = 0.0  # 0 = fully retracted, max = fully extended
+        self.plunger_position = 0.0
         self.plunger_velocity = 0.0
+        self.time = 0.0
+        self.dt = 0.01
         
-        # Internal simulation state
-        self.suction_pressure = 0.0
-        self.time_in_state = 0.0
-        self.dt = 0.01  # Simulation timestep
+        # Event tracking for rewards
+        self.aspiration_events: List[AspirationEvent] = []
+        self.dispensing_events: List[DispensingEvent] = []
+        self.ball_loss_events: List[BallLossEvent] = []
+        self.phase_violation_events: List[PhaseViolationEvent] = []
         
-        # Statistics and logging
-        self.aspiration_history = []
-        self.dispense_history = []
+        # State tracking
+        self.last_held_particles = []
+        self.expected_particles_held = 0
+        self.source_well_id = None
+        self.target_well_id = None
+        
+    
+        # Well definitions - UPDATED to match XML
+        self.wells = {
+            1: np.array([-0.12, 0.0, 0.01]),  # Source well (moved from -0.08)
+            2: np.array([0.0, 0.0, 0.01]),    # Middle well  
+            3: np.array([0.12, 0.0, 0.01])    # Target well (moved from 0.08)
+        }
+    
+        
+        # Task configuration
+        self.source_well_id = 1
+        self.target_well_id = 3
         
     def add_particle(self, position: np.ndarray, particle_id: int = None, well_id: int = None) -> Particle:
         """Add a new particle to the simulation"""
@@ -85,139 +150,137 @@ class PipettePhysicsSimulator:
             id=particle_id,
             position=position.copy(),
             velocity=np.zeros(3),
-            well_id=well_id
+            well_id=well_id,
+            original_well=well_id
         )
         self.particles.append(particle)
         return particle
     
     def update_pipette_state(self, tip_position: np.ndarray, plunger_depth: float, dt: float):
-        """
-        Update pipette state based on position and plunger depth.
-        
-        Args:
-            tip_position: 3D position of pipette tip
-            plunger_depth: Depth of plunger (0-1, where 1 is fully extended)
-            dt: Time step for simulation
-        """
+        """Update pipette state and detect events"""
         self.pipette_tip_pos = tip_position.copy()
         self.plunger_position = np.clip(plunger_depth, 0.0, 1.0)
         self.dt = dt
-        self.time_in_state += dt
+        self.time += dt
         
-        # Calculate plunger velocity for state detection
+        # Calculate plunger velocity
         prev_plunger = getattr(self, '_prev_plunger_pos', self.plunger_position)
         self.plunger_velocity = (self.plunger_position - prev_plunger) / dt
         self._prev_plunger_pos = self.plunger_position
         
-        # Update pipette state based on plunger movement and position
+        # Store previous state for loss detection
+        self.last_held_particles = [p.id for p in self.held_particles]
+        
+        # Update states
         self._update_pipette_state()
-        
-        # Apply physics simulation
+        self._update_task_phase()
         self._simulate_particle_physics()
-        
-        # Handle aspiration and dispensing
         self._handle_particle_interactions()
-    
+        self._detect_ball_losses()
+        
     def _update_pipette_state(self):
         """Update the pipette operational state"""
         plunger_depth = self.plunger_position * self.config.plunger_travel
         
         if self.plunger_velocity < -0.1 and plunger_depth > self.config.min_suction_depth:
-            # Plunger moving up (creating suction)
             if len(self.held_particles) < self.config.max_capacity:
                 self.pipette_state = PipetteState.ASPIRATING
             else:
                 self.pipette_state = PipetteState.HOLDING
         elif self.plunger_velocity > 0.1 and len(self.held_particles) > 0:
-            # Plunger moving down (dispensing)
             self.pipette_state = PipetteState.DISPENSING
         elif len(self.held_particles) > 0:
-            # Holding particles
             self.pipette_state = PipetteState.HOLDING
         else:
-            # No active operation
             self.pipette_state = PipetteState.IDLE
     
-    def _calculate_suction_force(self, particle_pos: np.ndarray) -> float:
-        """
-        Calculate suction force on a particle based on pipette state and position.
+    def _update_task_phase(self):
+        """Update task phase and detect violations"""
+        current_well = self._get_current_well()
         
-        Returns:
-            Suction force magnitude (positive = toward pipette)
-        """
-        if self.pipette_state != PipetteState.ASPIRATING:
-            return 0.0
+        old_phase = self.task_phase
         
-        # Distance from particle to pipette tip
-        distance = np.linalg.norm(particle_pos - self.pipette_tip_pos)
+        # Phase transition logic
+        if self.task_phase == TaskPhase.APPROACH_SOURCE:
+            if current_well == self.source_well_id and len(self.held_particles) == 0:
+                if self.pipette_state == PipetteState.ASPIRATING:
+                    self.task_phase = TaskPhase.ASPIRATE
         
-        if distance > self.config.suction_range:
-            return 0.0
+        elif self.task_phase == TaskPhase.ASPIRATE:
+            if len(self.held_particles) > 0:
+                self.task_phase = TaskPhase.TRANSPORT
         
-        # Suction force based on plunger depth and distance
-        plunger_depth = self.plunger_position * self.config.plunger_travel
-        depth_factor = np.clip((plunger_depth - self.config.min_suction_depth) / 
-                              (self.config.max_suction_depth - self.config.min_suction_depth), 0.0, 1.0)
+        elif self.task_phase == TaskPhase.TRANSPORT:
+            if current_well == self.target_well_id:
+                self.task_phase = TaskPhase.APPROACH_TARGET
         
-        # Distance factor (inverse square law with minimum)
-        distance_factor = max(0.1, 1.0 / (1.0 + distance / self.config.tip_radius))
+        elif self.task_phase == TaskPhase.APPROACH_TARGET:
+            if self.pipette_state == PipetteState.DISPENSING:
+                self.task_phase = TaskPhase.DISPENSE
         
-        # Velocity factor (more suction for faster plunger movement)
-        velocity_factor = max(1.0, abs(self.plunger_velocity) * 5)
+        elif self.task_phase == TaskPhase.DISPENSE:
+            if len(self.held_particles) == 0:
+                self.task_phase = TaskPhase.COMPLETE
         
-        return self.config.suction_force_max * depth_factor * distance_factor * velocity_factor
+        # Detect phase violations
+        self._detect_phase_violations(old_phase)
     
-    def _get_particles_in_range(self) -> List[Tuple[Particle, float]]:
-        """Get particles within suction range, sorted by distance"""
-        candidates = []
+    def _detect_phase_violations(self, old_phase: TaskPhase):
+        """Detect and record phase violations"""
+        current_well = self._get_current_well()
         
-        for particle in self.particles:
-            if particle.is_held:
-                continue
-                
-            distance = np.linalg.norm(particle.position - self.pipette_tip_pos)
-            if distance <= self.config.suction_range:
-                candidates.append((particle, distance))
-        
-        # Sort by distance (closest first)
-        candidates.sort(key=lambda x: x[1])
-        return candidates
-    
-    def _select_particles_for_aspiration(self, candidates: List[Tuple[Particle, float]]) -> List[Particle]:
-        """
-        Select which particles to aspirate based on priority and capacity.
-        
-        Priority factors:
-        1. Distance to pipette tip (closer = higher priority)
-        2. Particle size (smaller particles easier to aspirate)
-        3. Current capacity limit
-        4. Existing particle cohesion
-        """
-        available_capacity = self.config.max_capacity - len(self.held_particles)
-        if available_capacity <= 0:
-            return []
-        
-        selected = []
-        
-        # Simple selection: take closest particles up to capacity
-        for particle, distance in candidates[:available_capacity]:
-            # Additional checks for aspiration feasibility
-            suction_force = self._calculate_suction_force(particle.position)
+        # Violation: Aspirating at wrong time/place
+        if (self.pipette_state == PipetteState.ASPIRATING and 
+            self.task_phase != TaskPhase.ASPIRATE and 
+            old_phase != TaskPhase.APPROACH_SOURCE):
             
-            # Minimum force threshold for aspiration
-            if suction_force > 1.0:  # Arbitrary threshold
-                selected.append(particle)
+            self.phase_violation_events.append(PhaseViolationEvent(
+                timestamp=self.time,
+                expected_phase=self.task_phase,
+                actual_action="aspirating",
+                violation_type="wrong_phase_aspiration"
+            ))
         
-        return selected
+        # Violation: Dispensing at wrong location
+        if (self.pipette_state == PipetteState.DISPENSING and 
+            current_well != self.target_well_id and 
+            len(self.held_particles) > 0):
+            
+            self.phase_violation_events.append(PhaseViolationEvent(
+                timestamp=self.time,
+                expected_phase=TaskPhase.APPROACH_TARGET,
+                actual_action="dispensing_wrong_location",
+                violation_type="wrong_location_dispensing"
+            ))
+        
+        # Violation: Skipping transport phase
+        if (old_phase == TaskPhase.ASPIRATE and 
+            self.task_phase == TaskPhase.APPROACH_TARGET and 
+            current_well == self.source_well_id):
+            
+            self.phase_violation_events.append(PhaseViolationEvent(
+                timestamp=self.time,
+                expected_phase=TaskPhase.TRANSPORT,
+                actual_action="skipped_transport",
+                violation_type="phase_skip"
+            ))
+    
+    def _get_current_well(self) -> Optional[int]:
+        """Determine which well the pipette is currently over"""
+        for well_id, well_pos in self.wells.items():
+            distance = np.linalg.norm(self.pipette_tip_pos[:2] - well_pos[:2])
+            if distance < self.config.well_radius:
+                return well_id
+        return None
     
     def _simulate_particle_physics(self):
         """Simulate physics for all particles"""
         for particle in self.particles:
             if particle.is_held:
                 # Held particles move with pipette tip
-                target_pos = self.pipette_tip_pos + np.array([0, 0, 0.01])  # Slightly inside tip
+                target_pos = self.pipette_tip_pos + np.array([0, 0, 0.01])
                 particle.position = 0.9 * particle.position + 0.1 * target_pos
-                particle.velocity *= 0.8  # Damping
+                particle.velocity *= 0.8
             else:
                 # Free particles subject to forces
                 forces = np.zeros(3)
@@ -230,7 +293,7 @@ class PipettePhysicsSimulator:
                     if direction_norm > 0:
                         forces += (direction / direction_norm) * suction_force
                 
-                # Dispense force (if pipette is dispensing and particle was held)
+                # Dispense force
                 if (self.pipette_state == PipetteState.DISPENSING and 
                     np.linalg.norm(particle.position - self.pipette_tip_pos) < 0.02):
                     direction = particle.position - self.pipette_tip_pos
@@ -244,137 +307,250 @@ class PipettePhysicsSimulator:
                 # Air resistance
                 forces -= particle.velocity * self.config.air_resistance
                 
-                # Particle cohesion (attraction to nearby particles)
-                for other in self.particles:
-                    if other.id != particle.id and not other.is_held:
-                        diff = other.position - particle.position
-                        distance = np.linalg.norm(diff)
-                        if 0 < distance < 0.05:  # Cohesion range
-                            forces += (diff / distance) * self.config.particle_cohesion / distance
-                
-                # Update velocity and position
+                # Update particle
                 acceleration = forces / particle.mass
                 particle.velocity += acceleration * self.dt
                 particle.position += particle.velocity * self.dt
                 
-                # Simple collision with ground
+                # Ground collision
                 if particle.position[2] < particle.radius:
                     particle.position[2] = particle.radius
                     particle.velocity[2] = max(0, particle.velocity[2])
     
+    def _calculate_suction_force(self, particle_pos: np.ndarray) -> float:
+        """Calculate suction force on a particle"""
+        if self.pipette_state != PipetteState.ASPIRATING:
+            return 0.0
+        
+        distance = np.linalg.norm(particle_pos - self.pipette_tip_pos)
+        if distance > self.config.suction_range:
+            return 0.0
+        
+        plunger_depth = self.plunger_position * self.config.plunger_travel
+        depth_factor = np.clip((plunger_depth - self.config.min_suction_depth) / 
+                              (self.config.max_suction_depth - self.config.min_suction_depth), 0.0, 1.0)
+        
+        distance_factor = max(0.1, 1.0 / (1.0 + distance / self.config.tip_radius))
+        velocity_factor = max(1.0, abs(self.plunger_velocity) * 5)
+        
+        return self.config.suction_force_max * depth_factor * distance_factor * velocity_factor
+    
     def _handle_particle_interactions(self):
-        """Handle aspiration and dispensing of particles"""
+        """Handle aspiration and dispensing with event recording"""
         if self.pipette_state == PipetteState.ASPIRATING:
             self._process_aspiration()
         elif self.pipette_state == PipetteState.DISPENSING:
             self._process_dispensing()
     
     def _process_aspiration(self):
-        """Process particle aspiration"""
+        """Process particle aspiration with detailed event recording"""
         candidates = self._get_particles_in_range()
         selected_particles = self._select_particles_for_aspiration(candidates)
         
+        aspirated_particles = []
+        current_well = self._get_current_well()
+        
         for particle in selected_particles:
-            # Check if particle is close enough and conditions are met
             distance = np.linalg.norm(particle.position - self.pipette_tip_pos)
             
-            if distance < self.config.tip_radius * 2:  # Very close to tip
+            if distance < self.config.tip_radius * 2:
                 particle.is_held = True
                 self.held_particles.append(particle)
-                
-                # Log aspiration event
-                self.aspiration_history.append({
-                    'time': self.time_in_state,
-                    'particle_id': particle.id,
-                    'position': particle.position.copy(),
-                    'plunger_depth': self.plunger_position
-                })
+                aspirated_particles.append(particle.id)
+        
+        # Record aspiration event if particles were aspirated
+        if aspirated_particles:
+            volume_aspirated = len(aspirated_particles)
+            
+            # Determine if aspiration was correct
+            was_correct_timing = (self.task_phase == TaskPhase.ASPIRATE and 
+                                current_well == self.source_well_id)
+            was_correct_volume = (self.config.min_aspiration_volume <= 
+                                volume_aspirated <= self.config.max_aspiration_volume)
+            
+            event = AspirationEvent(
+                timestamp=self.time,
+                particles_aspirated=aspirated_particles,
+                volume_aspirated=volume_aspirated,
+                plunger_depth=self.plunger_position,
+                pipette_position=self.pipette_tip_pos.copy(),
+                source_well=current_well,
+                was_correct_timing=was_correct_timing,
+                was_correct_volume=was_correct_volume
+            )
+            
+            self.aspiration_events.append(event)
     
     def _process_dispensing(self):
-        """Process particle dispensing"""
+        """Process particle dispensing with detailed event recording"""
         particles_to_release = []
+        current_well = self._get_current_well()
         
-        for particle in self.held_particles[:]:  # Copy list to allow modification
-            # Release particle with some probability based on plunger movement
+        for particle in self.held_particles[:]:
             release_probability = abs(self.plunger_velocity) * self.dt * 10
             
             if np.random.random() < release_probability:
                 particle.is_held = False
                 particles_to_release.append(particle)
                 
-                # Give particle some initial velocity away from pipette
+                # Give particle initial velocity
                 direction = np.random.normal(0, 1, 3)
-                direction[2] = abs(direction[2])  # Downward bias
+                direction[2] = abs(direction[2])
                 direction = direction / np.linalg.norm(direction)
-                particle.velocity = direction * 0.5  # Initial dispense velocity
-                
-                # Log dispense event
-                self.dispense_history.append({
-                    'time': self.time_in_state,
-                    'particle_id': particle.id,
-                    'position': particle.position.copy(),
-                    'plunger_depth': self.plunger_position
-                })
+                particle.velocity = direction * 0.5
         
-        # Remove released particles from held list
-        for particle in particles_to_release:
-            if particle in self.held_particles:
-                self.held_particles.remove(particle)
+        # Record dispensing event if particles were dispensed
+        if particles_to_release:
+            dispensed_particle_ids = [p.id for p in particles_to_release]
+            volume_dispensed = len(particles_to_release)
+            
+            # Determine if dispensing was correct
+            was_correct_position = (current_well == self.target_well_id)
+            was_correct_volume = (volume_dispensed <= self.config.target_aspiration_volume)
+            
+            event = DispensingEvent(
+                timestamp=self.time,
+                particles_dispensed=dispensed_particle_ids,
+                volume_dispensed=volume_dispensed,
+                plunger_depth=self.plunger_position,
+                pipette_position=self.pipette_tip_pos.copy(),
+                target_well=current_well,
+                was_correct_position=was_correct_position,
+                was_correct_volume=was_correct_volume
+            )
+            
+            self.dispensing_events.append(event)
+            
+            # Remove from held particles
+            for particle in particles_to_release:
+                if particle in self.held_particles:
+                    self.held_particles.remove(particle)
     
-    def get_state_dict(self) -> Dict:
-        """Get current simulation state for RL algorithm"""
+    def _detect_ball_losses(self):
+        """Detect unexpected ball losses"""
+        current_held_ids = [p.id for p in self.held_particles]
+        
+        for particle_id in self.last_held_particles:
+            if particle_id not in current_held_ids:
+                # Find the lost particle
+                lost_particle = next((p for p in self.particles if p.id == particle_id), None)
+                if lost_particle and not self.pipette_state == PipetteState.DISPENSING:
+                    # This is an unexpected loss
+                    self.ball_loss_events.append(BallLossEvent(
+                        timestamp=self.time,
+                        particle_id=particle_id,
+                        loss_position=lost_particle.position.copy(),
+                        expected_state="held"
+                    ))
+    
+    def _get_particles_in_range(self) -> List[Tuple[Particle, float]]:
+        """Get particles within suction range, sorted by distance"""
+        candidates = []
+        
+        for particle in self.particles:
+            if particle.is_held:
+                continue
+                
+            distance = np.linalg.norm(particle.position - self.pipette_tip_pos)
+            if distance <= self.config.suction_range:
+                candidates.append((particle, distance))
+        
+        candidates.sort(key=lambda x: x[1])
+        return candidates
+    
+    def _select_particles_for_aspiration(self, candidates: List[Tuple[Particle, float]]) -> List[Particle]:
+        """Select particles for aspiration"""
+        available_capacity = self.config.max_capacity - len(self.held_particles)
+        if available_capacity <= 0:
+            return []
+        
+        selected = []
+        for particle, distance in candidates[:available_capacity]:
+            suction_force = self._calculate_suction_force(particle.position)
+            if suction_force > 1.0:
+                selected.append(particle)
+        
+        return selected
+    
+    def calculate_reward_components(self) -> Dict[str, float]:
+        """Calculate the four specific reward components"""
+        rewards = {
+            'aspiration_component': 0.0,
+            'dispensing_component': 0.0,
+            'ball_loss_penalty': 0.0,
+            'phase_violation_penalty': 0.0
+        }
+        
+        # 1. Aspiration Component (recent events only)
+        recent_aspirations = [e for e in self.aspiration_events if self.time - e.timestamp < 0.1]
+        for event in recent_aspirations:
+            if event.was_correct_timing and event.was_correct_volume:
+                # Good aspiration reward
+                rewards['aspiration_component'] += 2.0 * event.volume_aspirated
+            else:
+                # Bad aspiration penalty
+                penalty = 0.0
+                if not event.was_correct_timing:
+                    penalty -= 1.0  # Wrong timing
+                if not event.was_correct_volume:
+                    penalty -= 1.0  # Wrong volume
+                if event.volume_aspirated > self.config.max_aspiration_volume:
+                    penalty -= 2.0  # Severe over-aspiration
+                rewards['aspiration_component'] += penalty
+        
+        # 2. Dispensing Component (recent events only)
+        recent_dispensing = [e for e in self.dispensing_events if self.time - e.timestamp < 0.1]
+        for event in recent_dispensing:
+            if event.was_correct_position and event.was_correct_volume:
+                # Good dispensing reward
+                rewards['dispensing_component'] += 3.0 * event.volume_dispensed
+            else:
+                # Bad dispensing penalty
+                penalty = 0.0
+                if not event.was_correct_position:
+                    penalty -= 2.0  # Wrong position is serious
+                if not event.was_correct_volume:
+                    penalty -= 1.0  # Wrong volume
+                rewards['dispensing_component'] += penalty
+        
+        # 3. Ball Loss Penalty (recent events only)
+        recent_losses = [e for e in self.ball_loss_events if self.time - e.timestamp < 0.1]
+        rewards['ball_loss_penalty'] = -3.0 * len(recent_losses)  # Severe penalty
+        
+        # 4. Phase Violation Penalty (recent events only)
+        recent_violations = [e for e in self.phase_violation_events if self.time - e.timestamp < 0.1]
+        violation_penalties = {
+            'wrong_phase_aspiration': -2.0,
+            'wrong_location_dispensing': -3.0,
+            'phase_skip': -1.5
+        }
+        
+        for event in recent_violations:
+            penalty = violation_penalties.get(event.violation_type, -1.0)
+            rewards['phase_violation_penalty'] += penalty
+        
+        return rewards
+    
+    def get_detailed_state_dict(self) -> Dict:
+        """Get detailed state information for debugging and analysis"""
         return {
             'pipette_tip_position': self.pipette_tip_pos.copy(),
             'plunger_position': self.plunger_position,
             'plunger_velocity': self.plunger_velocity,
             'pipette_state': self.pipette_state.value,
+            'task_phase': self.task_phase.value,
             'held_particle_count': len(self.held_particles),
             'held_particle_ids': [p.id for p in self.held_particles],
-            'nearby_particle_count': len(self._get_particles_in_range()),
-            'suction_pressure': self._calculate_suction_force(self.pipette_tip_pos),
-            'particles_in_range': [
-                {
-                    'id': p.id,
-                    'position': p.position.copy(),
-                    'distance': dist,
-                    'suction_force': self._calculate_suction_force(p.position)
-                }
-                for p, dist in self._get_particles_in_range()
-            ]
+            'current_well': self._get_current_well(),
+            'source_well_id': self.source_well_id,
+            'target_well_id': self.target_well_id,
+            'recent_events': {
+                'aspirations': len([e for e in self.aspiration_events if self.time - e.timestamp < 1.0]),
+                'dispensing': len([e for e in self.dispensing_events if self.time - e.timestamp < 1.0]),
+                'ball_losses': len([e for e in self.ball_loss_events if self.time - e.timestamp < 1.0]),
+                'phase_violations': len([e for e in self.phase_violation_events if self.time - e.timestamp < 1.0])
+            }
         }
-    
-    def calculate_reward_components(self) -> Dict[str, float]:
-        """Calculate reward components for RL training"""
-        rewards = {
-            'aspiration_reward': 0.0,
-            'dispensing_reward': 0.0,
-            'efficiency_penalty': 0.0,
-            'capacity_bonus': 0.0,
-            'state_bonus': 0.0
-        }
-        
-        # Reward recent aspirations
-        recent_aspirations = [a for a in self.aspiration_history if self.time_in_state - a['time'] < 0.1]
-        rewards['aspiration_reward'] = len(recent_aspirations) * 2.0
-        
-        # Reward recent dispensing
-        recent_dispensing = [d for d in self.dispense_history if self.time_in_state - d['time'] < 0.1]
-        rewards['dispensing_reward'] = len(recent_dispensing) * 1.5
-        
-        # Penalty for inefficient operation
-        if self.pipette_state == PipetteState.ASPIRATING and len(self._get_particles_in_range()) == 0:
-            rewards['efficiency_penalty'] = -0.1
-        
-        # Bonus for optimal capacity usage
-        capacity_ratio = len(self.held_particles) / self.config.max_capacity
-        if 0.5 <= capacity_ratio <= 1.0:
-            rewards['capacity_bonus'] = capacity_ratio * 0.5
-        
-        # State-based rewards
-        if self.pipette_state == PipetteState.HOLDING and len(self.held_particles) > 0:
-            rewards['state_bonus'] = 0.1
-        
-        return rewards
     
     def reset(self):
         """Reset simulation state"""
@@ -384,83 +560,13 @@ class PipettePhysicsSimulator:
         
         self.held_particles.clear()
         self.pipette_state = PipetteState.IDLE
-        self.time_in_state = 0.0
-        self.aspiration_history.clear()
-        self.dispense_history.clear()
-    
-    def visualize_state(self, ax=None):
-        """Create a visualization of current simulation state"""
-        if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        self.task_phase = TaskPhase.APPROACH_SOURCE
+        self.time = 0.0
         
-        # Plot particles
-        for particle in self.particles:
-            color = 'red' if particle.is_held else 'blue'
-            ax.scatter(particle.position[0], particle.position[2], 
-                      c=color, s=100, alpha=0.7, label=f'Particle {particle.id}')
+        # Clear event history
+        self.aspiration_events.clear()
+        self.dispensing_events.clear()
+        self.ball_loss_events.clear()
+        self.phase_violation_events.clear()
         
-        # Plot pipette tip
-        ax.scatter(self.pipette_tip_pos[0], self.pipette_tip_pos[2], 
-                  c='green', s=200, marker='^', label='Pipette Tip')
-        
-        # Plot suction range
-        circle = plt.Circle((self.pipette_tip_pos[0], self.pipette_tip_pos[2]), 
-                           self.config.suction_range, fill=False, color='green', alpha=0.3)
-        ax.add_patch(circle)
-        
-        ax.set_xlabel('X Position')
-        ax.set_ylabel('Z Position')
-        ax.set_title(f'Pipette State: {self.pipette_state.value} | '
-                    f'Held: {len(self.held_particles)} | '
-                    f'Plunger: {self.plunger_position:.2f}')
-        ax.grid(True)
-        ax.axis('equal')
-        
-        return ax
-
-# Example usage and integration with RL
-class PipetteEnvironmentWrapper:
-    """Wrapper to integrate the physics simulator with RL algorithms"""
-    
-    def __init__(self, physics_sim: PipettePhysicsSimulator):
-        self.physics_sim = physics_sim
-        self.last_reward_time = 0.0
-    
-    def step(self, mujoco_state: Dict, action: np.ndarray) -> Tuple[Dict, float, bool, Dict]:
-        """
-        Step function compatible with RL algorithms
-        
-        Args:
-            mujoco_state: State from MuJoCo simulation
-            action: Action from RL agent [x, y, z, plunger]
-        
-        Returns:
-            observation, reward, done, info
-        """
-        # Extract pipette position from MuJoCo state
-        tip_position = np.array([action[0], action[1], mujoco_state.get('z_pos', 0)])
-        plunger_depth = action[3]  # Use RL action for plunger instead of MuJoCo
-        
-        # Update physics simulation
-        self.physics_sim.update_pipette_state(tip_position, plunger_depth, 0.01)
-        
-        # Get observation
-        observation = self.physics_sim.get_state_dict()
-        
-        # Calculate reward
-        reward_components = self.physics_sim.calculate_reward_components()
-        total_reward = sum(reward_components.values())
-        
-        # Check if episode is done (example conditions)
-        done = (len(self.physics_sim.held_particles) >= self.physics_sim.config.max_capacity and 
-                self.physics_sim.pipette_state == PipetteState.HOLDING)
-        
-        # Additional info
-        info = {
-            'reward_components': reward_components,
-            'physics_state': observation,
-            'particles_aspirated': len(self.physics_sim.aspiration_history),
-            'particles_dispensed': len(self.physics_sim.dispense_history)
-        }
-        
-        return observation, total_reward, done, info
+        self.last_held_particles = []
