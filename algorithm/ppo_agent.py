@@ -18,11 +18,19 @@ class Actor(nn.Module):
             nn.Linear(hidden_dim, action_shape[0])
         )
 
+        # Action scaling for the XML ranges: x[-0.15,0.15], y[-0.12,0.12], z[-0.15,0.05], plunger[0,0.08]
+        self.action_scale = torch.tensor([0.15, 0.12, 0.1, 0.04], dtype=torch.float32)
+        self.action_bias = torch.tensor([0.0, 0.0, -0.05, 0.04], dtype=torch.float32)
+
         self.apply(utils.weight_init)
 
     def forward(self, obs):
         mu = self.policy(obs)
-        mu = torch.tanh(mu) 
+        mu = torch.tanh(mu)  # Output in [-1, 1]
+        
+        # Scale to actual action ranges
+        mu = mu * self.action_scale.to(mu.device) + self.action_bias.to(mu.device)
+        
         std = torch.ones_like(mu) * self.std
 
         dist = utils.TruncatedNormal(mu, std)
@@ -72,7 +80,7 @@ class PPOAgent:
         self.critic.train(training)
 
     def act(self, obs, eval_mode):
-        obs = torch.as_tensor(obs, device=self.device)
+        obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)  # Add dtype for CPU/GPU compatibility
         dist = self.actor(obs.unsqueeze(0))
         
         if eval_mode:
@@ -84,7 +92,7 @@ class PPOAgent:
 
     def get_value(self, obs):
         """Get value estimate (new for PPO)"""
-        obs = torch.as_tensor(obs, device=self.device)
+        obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)  # Add dtype for CPU/GPU compatibility
         with torch.no_grad():
             value = self.critic(obs.unsqueeze(0))
         return value.cpu().numpy()[0, 0]
@@ -103,9 +111,9 @@ class PPOAgent:
         """
         metrics = dict()
 
-        # Extract data from batch
-        obs = torch.as_tensor(batch_data['observations'], device=self.device)
-        returns = torch.as_tensor(batch_data['returns'], device=self.device)
+        # Extract data from batch - add dtype for CPU/GPU compatibility
+        obs = torch.as_tensor(batch_data['observations'], device=self.device, dtype=torch.float32)
+        returns = torch.as_tensor(batch_data['returns'], device=self.device, dtype=torch.float32)
 
         # Compute current value estimates
         current_values = self.critic(obs).squeeze(-1)
@@ -139,11 +147,11 @@ class PPOAgent:
         """
         metrics = dict()
 
-        # Extract data from batch
-        obs = torch.as_tensor(batch_data['observations'], device=self.device)
-        actions = torch.as_tensor(batch_data['actions'], device=self.device)
-        advantages = torch.as_tensor(batch_data['advantages'], device=self.device)
-        old_log_probs = torch.as_tensor(batch_data['old_log_probs'], device=self.device)
+        # Extract data from batch - add dtype for CPU/GPU compatibility
+        obs = torch.as_tensor(batch_data['observations'], device=self.device, dtype=torch.float32)
+        actions = torch.as_tensor(batch_data['actions'], device=self.device, dtype=torch.float32)
+        advantages = torch.as_tensor(batch_data['advantages'], device=self.device, dtype=torch.float32)
+        old_log_probs = torch.as_tensor(batch_data['old_log_probs'], device=self.device, dtype=torch.float32)
 
         # Get current policy distribution
         action_distribution = self.actor(obs)
@@ -206,12 +214,12 @@ class PPOAgent:
         """
         all_metrics = {'actor_loss': 0, 'critic_loss': 0, 'policy_ratio': 0, 'critic_target': 0}
         
-        # Convert data to tensors
-        obs = torch.as_tensor(buffer_data['observations'], device=self.device)
-        actions = torch.as_tensor(buffer_data['actions'], device=self.device)
-        returns = torch.as_tensor(buffer_data['returns'], device=self.device)
-        advantages = torch.as_tensor(buffer_data['advantages'], device=self.device)
-        old_log_probs = torch.as_tensor(buffer_data['old_log_probs'], device=self.device)
+        # Convert data to tensors - add dtype for CPU/GPU compatibility
+        obs = torch.as_tensor(buffer_data['observations'], device=self.device, dtype=torch.float32)
+        actions = torch.as_tensor(buffer_data['actions'], device=self.device, dtype=torch.float32)
+        returns = torch.as_tensor(buffer_data['returns'], device=self.device, dtype=torch.float32)
+        advantages = torch.as_tensor(buffer_data['advantages'], device=self.device, dtype=torch.float32)
+        old_log_probs = torch.as_tensor(buffer_data['old_log_probs'], device=self.device, dtype=torch.float32)
         
         dataset_size = len(obs)
         
