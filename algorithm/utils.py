@@ -78,9 +78,7 @@ class Every:
         if self._every is None:
             return False
         every = self._every // self._action_repeat
-        if step % every == 0:
-            return True
-        return False
+        return (step % every) == 0
 
 
 class Timer:

@@ -2,21 +2,21 @@
 
 config = {
     # System Settings
-    'device': 'cuda' if __import__('torch').cuda.is_available() else 'cpu',  
+    'device': 'cuda' if __import__('torch').cuda.is_available() else 'cpu',
     'seed': 42,
-    'use_tb': True,  
+    'use_tb': True,
     'save_snapshot': True,
-    
+
     # MuJoCo Environment Settings (UPDATED)
     'mujoco_xml_path': 'particle_pipette_system.xml',
     'max_episode_steps': 500,  # Increased for complex physics simulation
     'render_mode': 'human',    # 'human' for visualization, 'rgb_array' for recording
-    
+
     # Task Settings
     'target_volume': 20,
     'source_volume': 50,
     'success_threshold': 2,    # Number of particles to transfer for success
-    
+
     # PPO Algorithm Settings
     'lr': 3e-4,
     'hidden_dim': 256,
@@ -27,22 +27,22 @@ config = {
     'ppo_epochs': 10,
     'gamma': 0.99,
     'lam': 0.95,
-    
+
     # Training Settings
     'num_train_frames': 200000,  # Increased for physics simulation
     'eval_every_frames': 10000,  # Less frequent evaluation
     'num_eval_episodes': 5,      # Fewer eval episodes (physics is slower)
-    
+
     # Reward Function Weights (for optional custom rewards)
     'w_volume': 5.0,        # Reduced since MuJoCo has its own rewards
     'w_completion': 25.0,   # Reduced since MuJoCo has its own rewards
     'w_time': 0.005,        # Reduced time penalty
-    'w_collision': 1.0,     # Reduced collision penalty  
+    'w_collision': 1.0,     # Reduced collision penalty
     'w_drop': 2.5,          # Reduced drop penalty
     'w_contamination': 1.5, # Reduced contamination penalty
     'w_miss': 1.0,          # Reduced miss penalty
     'w_jerk': 0.05,         # Reduced jerk penalty
-    
+
     # MuJoCo-specific Settings
     'physics_timestep': 0.001,   # MuJoCo simulation timestep
     'control_timestep': 0.01,    # Control frequency (10x slower than physics)
@@ -58,10 +58,12 @@ def get_config():
 # MuJoCo Integration Notes
 INTEGRATION_NOTES = {
     'observation_space': {
-        'shape': (25,),  # Changed from (14,) 
+        # Changed from (25,) to (26,) because we concatenate 26 features in the
+        # integrated environment (_get_observation produces 26 values).
+        'shape': (26,),
         'components': [
             'joint_positions (4D): [x, y, z, plunger]',
-            'joint_velocities (4D): [vx, vy, vz, v_plunger]', 
+            'joint_velocities (4D): [vx, vy, vz, v_plunger]',
             'pipette_tip_position (3D): [tip_x, tip_y, tip_z]',
             'plunger_position (1D): plunger depth',
             'held_particle_count (1D): particles in pipette',
@@ -72,10 +74,10 @@ INTEGRATION_NOTES = {
         ]
     },
     'action_space': {
-        'shape': (4,),  # Changed from (6,)
+        'shape': (4,),  # Matches the 4‐dimensional action output
         'components': [
             'x_position: pipette x coordinate [-0.4, 0.4]',
-            'y_position: pipette y coordinate [-0.4, 0.4]', 
+            'y_position: pipette y coordinate [-0.4, 0.4]',
             'z_position: pipette z coordinate [-0.3, 0.1]',
             'plunger_depth: plunger extension [0.0, 1.0]'
         ]

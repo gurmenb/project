@@ -8,17 +8,26 @@ import torchvision
 from termcolor import colored
 from torch.utils.tensorboard import SummaryWriter
 
-COMMON_TRAIN_FORMAT = [('frame', 'F', 'int'), ('step', 'S', 'int'),
-                       ('episode', 'E', 'int'), ('episode_length', 'L', 'int'),
-                       ('episode_reward', 'R', 'float'),
-                       ('buffer_size', 'BS', 'int'), ('fps', 'FPS', 'float'),
-                       ('total_time', 'T', 'time')]
+COMMON_TRAIN_FORMAT = [
+    ('frame', 'F', 'int'),
+    ('step', 'S', 'int'),
+    ('episode', 'E', 'int'),
+    ('episode_length', 'L', 'int'),
+    ('episode_reward', 'R', 'float'),
+    ('buffer_size', 'BS', 'int'),
+    ('fps', 'FPS', 'float'),
+    ('total_time', 'T', 'time')
+]
 
-COMMON_EVAL_FORMAT = [('frame', 'F', 'int'), ('step', 'S', 'int'),
-                      ('episode', 'E', 'int'), ('episode_length', 'L', 'int'),
-                      ('episode_reward', 'R', 'float'),
-                      ('episode_success', 'R', 'float'),
-                      ('total_time', 'T', 'time')]
+COMMON_EVAL_FORMAT = [
+    ('frame', 'F', 'int'),
+    ('step', 'S', 'int'),
+    ('episode', 'E', 'int'),
+    ('episode_length', 'L', 'int'),
+    ('episode_reward', 'R', 'float'),
+    ('episode_success', 'R', 'float'),
+    ('total_time', 'T', 'time')
+]
 
 
 class AverageMeter(object):
@@ -46,20 +55,21 @@ class MetersGroup(object):
         self._meters[key].update(value, n)
 
     def _prime_meters(self):
-        data = dict()
+        data = {}
         for key, meter in self._meters.items():
+            # Strip the prefix (e.g., 'train/' or 'eval/') if present
             if key.startswith('train'):
-                key = key[len('train') + 1:]
+                new_key = key[len('train') + 1:]
             elif key.startswith('actor'):
-                key = key[len('actor') + 1:]
+                new_key = key[len('actor') + 1:]
             elif key.startswith('critic'):
-                key = key[len('critic') + 1:]
+                new_key = key[len('critic') + 1:]
             elif key.startswith('pretrain'):
-                key = key[len('pretrain') + 1:]
-            else:
-                key = key[len('eval') + 1:]
-            key = key.replace('/', '_')
-            data[key] = meter.value()
+                new_key = key[len('pretrain') + 1:]
+            else:  # Assuming eval
+                new_key = key[len('eval') + 1:]
+            new_key = new_key.replace('/', '_')
+            data[new_key] = meter.value()
         return data
 
     def _remove_old_entries(self, data):
@@ -105,15 +115,12 @@ class MetersGroup(object):
             value = str(datetime.timedelta(seconds=int(value)))
             return f'{key}: {value}'
         else:
-            raise f'invalid format type: {ty}'
+            raise ValueError(f'invalid format type: {ty}')
 
     def _dump_to_console(self, data, prefix):
-        if prefix == 'train':
-            color = 'yellow'
-        else:
-            color = 'green'
-        prefix = colored(prefix, color)
-        pieces = [f'| {prefix: <14}']
+        color = 'yellow' if prefix == 'train' else 'green'
+        prefix_disp = colored(prefix, color)
+        pieces = [f'| {prefix_disp: <14}']
         for key, disp_key, ty in self._formating:
             value = data.get(key, 0)
             pieces.append(self._format(disp_key, value, ty))
@@ -132,16 +139,18 @@ class MetersGroup(object):
 class Logger(object):
     def __init__(self, log_dir, use_tb):
         self._log_dir = log_dir
+
         self._pretrain_mg = MetersGroup(log_dir / 'pretrain.csv',
-                                     formating=COMMON_TRAIN_FORMAT)
-        self._train_mg = MetersGroup(log_dir / 'train.csv',
-                                     formating=COMMON_TRAIN_FORMAT)
-        self._actor_mg = MetersGroup(log_dir / 'actor.csv',
-                                     formating=COMMON_TRAIN_FORMAT)
-        self._critic_mg = MetersGroup(log_dir / 'critic.csv',
-                                     formating=COMMON_TRAIN_FORMAT)
-        self._eval_mg = MetersGroup(log_dir / 'eval.csv',
-                                    formating=COMMON_EVAL_FORMAT)
+                                        formating=COMMON_TRAIN_FORMAT)
+        self._train_mg    = MetersGroup(log_dir / 'train.csv',
+                                        formating=COMMON_TRAIN_FORMAT)
+        self._actor_mg    = MetersGroup(log_dir / 'actor.csv',
+                                        formating=COMMON_TRAIN_FORMAT)
+        self._critic_mg   = MetersGroup(log_dir / 'critic.csv',
+                                        formating=COMMON_TRAIN_FORMAT)
+        self._eval_mg     = MetersGroup(log_dir / 'eval.csv',
+                                        formating=COMMON_EVAL_FORMAT)
+
         if use_tb:
             self._sw = SummaryWriter(str(log_dir / 'tb'))
         else:
@@ -152,10 +161,15 @@ class Logger(object):
             self._sw.add_scalar(key, value, step)
 
     def log(self, key, value, step):
-        assert key.startswith('train') or key.startswith('actor') or key.startswith('critic') or key.startswith('eval') or key.startswith('pretrain')
-        if type(value) == torch.Tensor:
+        # Expect keys like 'train/episode_reward' or 'eval/episode_success', etc.
+        assert key.startswith('train') or key.startswith('actor') \
+            or key.startswith('critic') or key.startswith('eval') \
+            or key.startswith('pretrain')
+
+        if isinstance(value, torch.Tensor):
             value = value.item()
         self._try_sw_log(key, value, step)
+
         if key.startswith('train'):
             mg = self._train_mg
         elif key.startswith('actor'):
@@ -164,7 +178,7 @@ class Logger(object):
             mg = self._critic_mg
         elif key.startswith('eval'):
             mg = self._eval_mg
-        else:
+        else:  # pretrain
             mg = self._pretrain_mg
 
         mg.log(key, value)
