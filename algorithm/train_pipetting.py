@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from collections import deque
+from pipette_visualization_tools import VisualizationWrapper, TrainingVisualizer
+
 
 # Set CUDA device before importing other modules for AWS AMI compatibility
 if torch.cuda.is_available():
@@ -97,8 +99,11 @@ class PipettingWorkspace:
         xml_path = "particle_pipette_system.xml"
         
         try:
-            self.train_env = IntegratedPipetteEnv(xml_path)
-            self.eval_env = IntegratedPipetteEnv(xml_path)
+            base_train_env = IntegratedPipetteEnv(xml_path)
+            self.train_env = VisualizationWrapper(base_train_env)
+            base_eval_env = IntegratedPipetteEnv(xml_path)
+            self.eval_env = VisualizationWrapper(base_eval_env)
+            
         except Exception as e:
             print(f"Error creating environment: {e}")
             print("Make sure particle_pipette_system.xml exists and integrated_pipette_environment.py is available")
