@@ -191,7 +191,7 @@
         <!-- Movement controls with reduced ranges -->
         <position name="x_control" joint="machine_x" ctrlrange="-0.5 0.5" kp="100"/>
         <position name="y_control" joint="machine_y" ctrlrange="-0.5 0.5" kp="100"/>
-        <position name="z_control" joint="machine_z" ctrlrange="-0 1" kp="100"/>
+        <position name="z_control" joint="machine_z" ctrlrange="0 1" kp="100"/>
         
         <!-- Plunger control -->
         <position name="plunger_control" joint="plunger_joint" ctrlrange="0 0.5" kp="50"/>

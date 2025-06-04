@@ -10,7 +10,7 @@ python train_pipette_agent.py
 
 go into mujoco-3.3.2/bin
 
-run: ./simulate ../model/pipette/pipette_system.xml
+run: ./simulate ../model/pipette/particle_pipette_system.xml
 ./simulate ../model/universal_robots_ur5e/ur5e.xml
 
 # Test everything (this will verify your XML file works)
