@@ -1,0 +1,31 @@
+env:
+  name: pipette
+  max_episode_steps: 200
+  environment_size: 10.0
+  well_radius: 1.0
+  well_depth: 2.0
+discount: 0.99
+seed: 42
+use_tb: true
+save_snapshot: false
+experiment: pipette_ppo_iter_10_seed42_0604_005030
+device: auto
+lr: 0.0003
+agent:
+  obs_dim: 14
+  act_dim: 4
+  hidden_sizes:
+  - 256
+  - 256
+  clip_ratio: 0.2
+  target_kl: 0.01
+  gae_lambda: 0.95
+  entropy_coef: 0.01
+num_train_frames: 200000
+steps_per_epoch: 2000
+train_iterations: 10
+eval_every_frames: 5
+num_eval_episodes: 3
+save_frequency: 20
+log_frequency: 1
+log_dir: ./logs

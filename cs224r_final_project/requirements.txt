@@ -1,0 +1,12 @@
+torch
+numpy
+gymnasium
+omegaconf
+matplotlib
+seaborn
+pytest
+black
+flake8
+tqdm
+tensorboard
+termcolor
